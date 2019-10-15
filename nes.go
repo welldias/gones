@@ -1,7 +1,7 @@
 package main
 
-// The6502Instruction is the opcode translation table.
-type The6502Instruction struct {
+// Instruction is the opcode translation table.
+type Instruction struct {
 	name     string
 	cycles   uint8
 	Operate  func() uint8
@@ -16,7 +16,7 @@ type The6502 struct {
 	stackPtr       uint8  // Stack Pointer (points to location on bus)
 	programCounter uint16 // Program Counter
 	status         uint8  // Status Register
-	instructions   [256]The6502Instruction
+	instructions   []*Instruction
 }
 
 var (
@@ -29,19 +29,19 @@ var (
 	clockCount uint32 // A global accumulation of the number of clocks
 )
 
-// Flags6502 is the status register flag.
-type Flags6502 uint8
+// Flag is the status register flag.
+type Flag uint8
 
 // The status register stores 8 flags.
 const (
-	FlagC Flags6502 = (1 << 0) // Carry Bit
-	FlagZ Flags6502 = (1 << 1) // Zero
-	FlagI Flags6502 = (1 << 2) // Disable Interrupts
-	FlagD Flags6502 = (1 << 3) // Decimal Mode (unused in this implementation)
-	FlagB Flags6502 = (1 << 4) // Break
-	FlagU Flags6502 = (1 << 5) // Unused
-	FlagV Flags6502 = (1 << 6) // Overflow
-	FlagN Flags6502 = (1 << 7) // Negative
+	FlagC Flag = (1 << 0) // Carry Bit
+	FlagZ Flag = (1 << 1) // Zero
+	FlagI Flag = (1 << 2) // Disable Interrupts
+	FlagD Flag = (1 << 3) // Decimal Mode (unused in this implementation)
+	FlagB Flag = (1 << 4) // Break
+	FlagU Flag = (1 << 5) // Unused
+	FlagV Flag = (1 << 6) // Overflow
+	FlagN Flag = (1 << 7) // Negative
 )
 
 // Reset Interrupt - Forces CPU into known state
@@ -195,7 +195,7 @@ func (the6502 The6502) clock() {
 }
 
 // GetFlag returns the value of a specific bit of the status register
-func (the6502 The6502) GetFlag(flag Flags6502) uint8 {
+func (the6502 The6502) GetFlag(flag Flag) uint8 {
 	if (the6502.status & uint8(flag)) > 0 {
 		return 1
 	}
@@ -203,7 +203,7 @@ func (the6502 The6502) GetFlag(flag Flags6502) uint8 {
 }
 
 // SetFlag sets or clears a specific bit of the status register
-func (the6502 The6502) SetFlag(flag Flags6502, v bool) {
+func (the6502 The6502) SetFlag(flag Flag, v bool) {
 	if v {
 		the6502.status |= uint8(flag)
 	} else {
@@ -351,6 +351,426 @@ func (the6502 The6502) Ind() uint8 {
 	return 0
 }
 
+// Izx is Address Mode: Indirect X
+// The supplied 8-bit address is offset by X Register to index
+// a location in page 0x00. The actual 16-bit address is read
+// from this location
+func (the6502 The6502) Izx() uint8 {
+	var t uint16 = uint16(read(the6502.programCounter))
+	the6502.programCounter++
+
+	var lo uint16 = uint16(read((t + uint16(the6502.x)) & 0x00ff))
+	var hi uint16 = uint16(read((t + uint16(the6502.x) + 1) & 0x00ff))
+
+	addrAbs = (hi << 8) | lo
+
+	return 0
+}
+
+// Izy is Address Mode: Indirect Y
+// The supplied 8-bit address indexes a location in page 0x00. From
+// here the actual 16-bit address is read, and the contents of
+// Y Register is added to it to offset it. If the offset causes a
+// change in page then an additional clock cycle is required.
+func (the6502 The6502) Izy() uint8 {
+	var t uint16 = uint16(read(the6502.programCounter))
+	the6502.programCounter++
+
+	var lo uint16 = uint16(read(t & 0x00ff))
+	var hi uint16 = uint16(read((t + 1) & 0x00ff))
+
+	addrAbs = (hi << 8) | lo
+	addrAbs += uint16(the6502.y)
+
+	if (addrAbs & 0xff00) != (hi << 8) {
+		return 1
+	}
+	return 0
+}
+
+// Fetch is function sources the data used by the instruction into
+// a convenient numeric variable. Some instructions dont have to
+// fetch data as the source is implied by the instruction. For example
+// "INX" increments the X register. There is no additional data
+// required. For all other addressing modes, the data resides at
+// the location held within addr_abs, so it is read from there.
+// Immediate adress mode exploits this slightly, as that has
+// set addr_abs = pc + 1, so it fetches the data from the
+// next byte for example "LDA $FF" just loads the accumulator with
+// 256, i.e. no far reaching memory fetch is required. "fetched"
+// is a variable global to the CPU, and is set by calling this
+// function. It also returns it for convenience.
+func (the6502 The6502) Fetch() uint8 {
+
+	/* can't do that, refactory is needed
+	if the6502.instructions[opcode].Addrmode != the6502.Imp {
+		fetched = read(addrAbs)
+	}
+	*/
+
+	return fetched
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// INSTRUCTION IMPLEMENTATIONS
+
+// Note: Ive started with the two most complicated instructions to emulate, which
+// ironically is addition and subtraction! Ive tried to include a detailed
+// explanation as to why they are so complex, yet so fundamental. Im also NOT
+// going to do this through the explanation of 1 and 2's complement.
+
+// Instruction: Add with Carry In
+// Function:    A = A + M + C
+// Flags Out:   C, V, N, Z
+//
+// Explanation:
+// The purpose of this function is to add a value to the accumulator and a carry bit. If
+// the result is > 255 there is an overflow setting the carry bit. Ths allows you to
+// chain together ADC instructions to add numbers larger than 8-bits. This in itself is
+// simple, however the 6502 supports the concepts of Negativity/Positivity and Signed Overflow.
+//
+// 10000100 = 128 + 4 = 132 in normal circumstances, we know this as unsigned and it allows
+// us to represent numbers between 0 and 255 (given 8 bits). The 6502 can also interpret
+// this word as something else if we assume those 8 bits represent the range -128 to +127,
+// i.e. it has become signed.
+//
+// Since 132 > 127, it effectively wraps around, through -128, to -124. This wraparound is
+// called overflow, and this is a useful to know as it indicates that the calculation has
+// gone outside the permissable range, and therefore no longer makes numeric sense.
+//
+// Note the implementation of ADD is the same in binary, this is just about how the numbers
+// are represented, so the word 10000100 can be both -124 and 132 depending upon the
+// context the programming is using it in. We can prove this!
+//
+//  10000100 =  132  or  -124
+// +00010001 = + 17      + 17
+//  ========    ===       ===     See, both are valid additions, but our interpretation of
+//  10010101 =  149  or  -107     the context changes the value, not the hardware!
+//
+// In principle under the -128 to 127 range:
+// 10000000 = -128, 11111111 = -1, 00000000 = 0, 00000000 = +1, 01111111 = +127
+// therefore negative numbers have the most significant set, positive numbers do not
+//
+// To assist us, the 6502 can set the overflow flag, if the result of the addition has
+// wrapped around. V <- ~(A^M) & A^(A+M+C) :D lol, let's work out why!
+//
+// Let's suppose we have A = 30, M = 10 and C = 0
+//          A = 30 = 00011110
+//          M = 10 = 00001010+
+//     RESULT = 40 = 00101000
+//
+// Here we have not gone out of range. The resulting significant bit has not changed.
+// So let's make a truth table to understand when overflow has occurred. Here I take
+// the MSB of each component, where R is RESULT.
+//
+// A  M  R | V | A^R | A^M |~(A^M) |
+// 0  0  0 | 0 |  0  |  0  |   1   |
+// 0  0  1 | 1 |  1  |  0  |   1   |
+// 0  1  0 | 0 |  0  |  1  |   0   |
+// 0  1  1 | 0 |  1  |  1  |   0   |  so V = ~(A^M) & (A^R)
+// 1  0  0 | 0 |  1  |  1  |   0   |
+// 1  0  1 | 0 |  0  |  1  |   0   |
+// 1  1  0 | 1 |  1  |  0  |   1   |
+// 1  1  1 | 0 |  0  |  0  |   1   |
+//
+// We can see how the above equation calculates V, based on A, M and R. V was chosen
+// based on the following hypothesis:
+//       Positive Number + Positive Number = Negative Result -> Overflow
+//       Negative Number + Negative Number = Positive Result -> Overflow
+//       Positive Number + Negative Number = Either Result -> Cannot Overflow
+//       Positive Number + Positive Number = Positive Result -> OK! No Overflow
+//       Negative Number + Negative Number = Negative Result -> OK! NO Overflow
+
+// Adc is add numbers larger than 8-bits
+func (the6502 The6502) Adc() uint8 {
+	// Grab the data that we are adding to the accumulator
+	the6502.Fetch()
+
+	// Add is performed in 16-bit domain for emulation to capture any
+	// carry bit, which will exist in bit 8 of the 16-bit word
+	temp = uint16(the6502.a+fetched) + uint16(the6502.GetFlag(FlagC))
+
+	// The carry flag out exists in the high byte bit 0
+	the6502.SetFlag(FlagC, temp > 255)
+
+	// The Zero flag is set if the result is 0
+	the6502.SetFlag(FlagZ, (temp&0x00ff) == 0)
+
+	// The signed Overflow flag is set based on all that up there! :D
+	//the6502.SetFlag(FlagV, (~((uint16_t)the6502.a ^ (uint16_t)fetched) & ((uint16_t)the6502.a ^ (uint16_t)temp)) & 0x0080);
+
+	// The negative flag is set to the most significant bit of the result
+	the6502.SetFlag(FlagN, temp&uint16(0x80))
+
+	// Load the result into the accumulator (it's 8-bit dont forget!)
+	the6502.a = temp & uint16(0x00ff)
+
+	// This instruction has the potential to require an additional clock cycle
+	return 1
+}
+
+// CreateInstructions is the method that fill 6502 Instructions table
+func (the6502 The6502) CreateInstructions() {
+	the6502.instructions = []*Instruction{
+		&Instruction{"BRK", 7, the6502.Brk, the6502.Imm},
+		&Instruction{"ORA", 6, the6502.Ora, the6502.Izx},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 8, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 3, the6502.Nop, the6502.Imp},
+		&Instruction{"ORA", 3, the6502.Ora, the6502.Zp0},
+		&Instruction{"ASL", 5, the6502.Asl, the6502.Zp0},
+		&Instruction{"???", 5, the6502.Xxx, the6502.Imp},
+		&Instruction{"PHP", 3, the6502.Php, the6502.Imp},
+		&Instruction{"ORA", 2, the6502.Ora, the6502.Imm},
+		&Instruction{"ASL", 2, the6502.Asl, the6502.Imp},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"ORA", 4, the6502.Ora, the6502.Abs},
+		&Instruction{"ASL", 6, the6502.Asl, the6502.Abs},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"BPL", 2, the6502.Bpl, the6502.Rel},
+		&Instruction{"ORA", 5, the6502.Ora, the6502.Izy},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 8, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"ORA", 4, the6502.Ora, the6502.Zpx},
+		&Instruction{"ASL", 6, the6502.Asl, the6502.Zpx},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"CLC", 2, the6502.Clc, the6502.Imp},
+		&Instruction{"ORA", 4, the6502.Ora, the6502.Aby},
+		&Instruction{"???", 2, the6502.Nop, the6502.Imp},
+		&Instruction{"???", 7, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"ORA", 4, the6502.Ora, the6502.Abx},
+		&Instruction{"ASL", 7, the6502.Asl, the6502.Abx},
+		&Instruction{"???", 7, the6502.Xxx, the6502.Imp},
+		&Instruction{"JSR", 6, the6502.Jsr, the6502.Abs},
+		&Instruction{"AND", 6, the6502.And, the6502.Izx},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 8, the6502.Xxx, the6502.Imp},
+		&Instruction{"BIT", 3, the6502.Bit, the6502.Zp0},
+		&Instruction{"AND", 3, the6502.And, the6502.Zp0},
+		&Instruction{"ROL", 5, the6502.Rol, the6502.Zp0},
+		&Instruction{"???", 5, the6502.Xxx, the6502.Imp},
+		&Instruction{"PLP", 4, the6502.Plp, the6502.Imp},
+		&Instruction{"AND", 2, the6502.And, the6502.Imm},
+		&Instruction{"ROL", 2, the6502.Rol, the6502.Imp},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"BIT", 4, the6502.Bit, the6502.Abs},
+		&Instruction{"AND", 4, the6502.And, the6502.Abs},
+		&Instruction{"ROL", 6, the6502.Rol, the6502.Abs},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"BMI", 2, the6502.Bmi, the6502.Rel},
+		&Instruction{"AND", 5, the6502.And, the6502.Izy},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 8, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"AND", 4, the6502.And, the6502.Zpx},
+		&Instruction{"ROL", 6, the6502.Rol, the6502.Zpx},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"SEC", 2, the6502.Sec, the6502.Imp},
+		&Instruction{"AND", 4, the6502.And, the6502.Aby},
+		&Instruction{"???", 2, the6502.Nop, the6502.Imp},
+		&Instruction{"???", 7, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"AND", 4, the6502.And, the6502.Abx},
+		&Instruction{"ROL", 7, the6502.Rol, the6502.Abx},
+		&Instruction{"???", 7, the6502.Xxx, the6502.Imp},
+		&Instruction{"RTI", 6, the6502.Rti, the6502.Imp},
+		&Instruction{"EOR", 6, the6502.Eor, the6502.Izx},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 8, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 3, the6502.Nop, the6502.Imp},
+		&Instruction{"EOR", 3, the6502.Eor, the6502.Zp0},
+		&Instruction{"LSR", 5, the6502.Lsr, the6502.Zp0},
+		&Instruction{"???", 5, the6502.Xxx, the6502.Imp},
+		&Instruction{"PHA", 3, the6502.Pha, the6502.Imp},
+		&Instruction{"EOR", 2, the6502.Eor, the6502.Imm},
+		&Instruction{"LSR", 2, the6502.Lsr, the6502.Imp},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"JMP", 3, the6502.Jmp, the6502.Abs},
+		&Instruction{"EOR", 4, the6502.Eor, the6502.Abs},
+		&Instruction{"LSR", 6, the6502.Lsr, the6502.Abs},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"BVC", 2, the6502.Bvc, the6502.Rel},
+		&Instruction{"EOR", 5, the6502.Eor, the6502.Izy},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 8, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"EOR", 4, the6502.Eor, the6502.Zpx},
+		&Instruction{"LSR", 6, the6502.Lsr, the6502.Zpx},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"CLI", 2, the6502.Cli, the6502.Imp},
+		&Instruction{"EOR", 4, the6502.Eor, the6502.Aby},
+		&Instruction{"???", 2, the6502.Nop, the6502.Imp},
+		&Instruction{"???", 7, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"EOR", 4, the6502.Eor, the6502.Abx},
+		&Instruction{"LSR", 7, the6502.Lsr, the6502.Abx},
+		&Instruction{"???", 7, the6502.Xxx, the6502.Imp},
+		&Instruction{"RTS", 6, the6502.Rts, the6502.Imp},
+		&Instruction{"ADC", 6, the6502.Adc, the6502.Izx},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 8, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 3, the6502.Nop, the6502.Imp},
+		&Instruction{"ADC", 3, the6502.Adc, the6502.Zp0},
+		&Instruction{"ROR", 5, the6502.Ror, the6502.Zp0},
+		&Instruction{"???", 5, the6502.Xxx, the6502.Imp},
+		&Instruction{"PLA", 4, the6502.Pla, the6502.Imp},
+		&Instruction{"ADC", 2, the6502.Adc, the6502.Imm},
+		&Instruction{"ROR", 2, the6502.Ror, the6502.Imp},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"JMP", 5, the6502.Jmp, the6502.Ind},
+		&Instruction{"ADC", 4, the6502.Adc, the6502.Abs},
+		&Instruction{"ROR", 6, the6502.Ror, the6502.Abs},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"BVS", 2, the6502.Bvs, the6502.Rel},
+		&Instruction{"ADC", 5, the6502.Adc, the6502.Izy},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 8, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"ADC", 4, the6502.Adc, the6502.Zpx},
+		&Instruction{"ROR", 6, the6502.Ror, the6502.Zpx},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"SEI", 2, the6502.Sei, the6502.Imp},
+		&Instruction{"ADC", 4, the6502.Adc, the6502.Aby},
+		&Instruction{"???", 2, the6502.Nop, the6502.Imp},
+		&Instruction{"???", 7, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"ADC", 4, the6502.Adc, the6502.Abx},
+		&Instruction{"ROR", 7, the6502.Ror, the6502.Abx},
+		&Instruction{"???", 7, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 2, the6502.Nop, the6502.Imp},
+		&Instruction{"STA", 6, the6502.Sta, the6502.Izx},
+		&Instruction{"???", 2, the6502.Nop, the6502.Imp},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"STY", 3, the6502.Sty, the6502.Zp0},
+		&Instruction{"STA", 3, the6502.Sta, the6502.Zp0},
+		&Instruction{"STX", 3, the6502.Stx, the6502.Zp0},
+		&Instruction{"???", 3, the6502.Xxx, the6502.Imp},
+		&Instruction{"DEY", 2, the6502.Dey, the6502.Imp},
+		&Instruction{"???", 2, the6502.Nop, the6502.Imp},
+		&Instruction{"TXA", 2, the6502.Txa, the6502.Imp},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"STY", 4, the6502.Sty, the6502.Abs},
+		&Instruction{"STA", 4, the6502.Sta, the6502.Abs},
+		&Instruction{"STX", 4, the6502.Stx, the6502.Abs},
+		&Instruction{"???", 4, the6502.Xxx, the6502.Imp},
+		&Instruction{"BCC", 2, the6502.Bcc, the6502.Rel},
+		&Instruction{"STA", 6, the6502.Sta, the6502.Izy},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"STY", 4, the6502.Sty, the6502.Zpx},
+		&Instruction{"STA", 4, the6502.Sta, the6502.Zpx},
+		&Instruction{"STX", 4, the6502.Stx, the6502.Zpy},
+		&Instruction{"???", 4, the6502.Xxx, the6502.Imp},
+		&Instruction{"TYA", 2, the6502.Tya, the6502.Imp},
+		&Instruction{"STA", 5, the6502.Sta, the6502.Aby},
+		&Instruction{"TXS", 2, the6502.Txs, the6502.Imp},
+		&Instruction{"???", 5, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 5, the6502.Nop, the6502.Imp},
+		&Instruction{"STA", 5, the6502.Sta, the6502.Abx},
+		&Instruction{"???", 5, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 5, the6502.Xxx, the6502.Imp},
+		&Instruction{"LDY", 2, the6502.Ldy, the6502.Imm},
+		&Instruction{"LDA", 6, the6502.Lda, the6502.Izx},
+		&Instruction{"LDX", 2, the6502.Ldx, the6502.Imm},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"LDY", 3, the6502.Ldy, the6502.Zp0},
+		&Instruction{"LDA", 3, the6502.Lda, the6502.Zp0},
+		&Instruction{"LDX", 3, the6502.Ldx, the6502.Zp0},
+		&Instruction{"???", 3, the6502.Xxx, the6502.Imp},
+		&Instruction{"TAY", 2, the6502.Tay, the6502.Imp},
+		&Instruction{"LDA", 2, the6502.Lda, the6502.Imm},
+		&Instruction{"TAX", 2, the6502.Tax, the6502.Imp},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"LDY", 4, the6502.Ldy, the6502.Abs},
+		&Instruction{"LDA", 4, the6502.Lda, the6502.Abs},
+		&Instruction{"LDX", 4, the6502.Ldx, the6502.Abs},
+		&Instruction{"???", 4, the6502.Xxx, the6502.Imp},
+		&Instruction{"BCS", 2, the6502.Bcs, the6502.Rel},
+		&Instruction{"LDA", 5, the6502.Lda, the6502.Izy},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 5, the6502.Xxx, the6502.Imp},
+		&Instruction{"LDY", 4, the6502.Ldy, the6502.Zpx},
+		&Instruction{"LDA", 4, the6502.Lda, the6502.Zpx},
+		&Instruction{"LDX", 4, the6502.Ldx, the6502.Zpy},
+		&Instruction{"???", 4, the6502.Xxx, the6502.Imp},
+		&Instruction{"CLV", 2, the6502.Clv, the6502.Imp},
+		&Instruction{"LDA", 4, the6502.Lda, the6502.Aby},
+		&Instruction{"TSX", 2, the6502.Tsx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Xxx, the6502.Imp},
+		&Instruction{"LDY", 4, the6502.Ldy, the6502.Abx},
+		&Instruction{"LDA", 4, the6502.Lda, the6502.Abx},
+		&Instruction{"LDX", 4, the6502.Ldx, the6502.Aby},
+		&Instruction{"???", 4, the6502.Xxx, the6502.Imp},
+		&Instruction{"CPY", 2, the6502.Cpy, the6502.Imm},
+		&Instruction{"CMP", 6, the6502.Cmp, the6502.Izx},
+		&Instruction{"???", 2, the6502.Nop, the6502.Imp},
+		&Instruction{"???", 8, the6502.Xxx, the6502.Imp},
+		&Instruction{"CPY", 3, the6502.Cpy, the6502.Zp0},
+		&Instruction{"CMP", 3, the6502.Cmp, the6502.Zp0},
+		&Instruction{"DEC", 5, the6502.Dec, the6502.Zp0},
+		&Instruction{"???", 5, the6502.Xxx, the6502.Imp},
+		&Instruction{"INY", 2, the6502.Iny, the6502.Imp},
+		&Instruction{"CMP", 2, the6502.Cmp, the6502.Imm},
+		&Instruction{"DEX", 2, the6502.Dex, the6502.Imp},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"CPY", 4, the6502.Cpy, the6502.Abs},
+		&Instruction{"CMP", 4, the6502.Cmp, the6502.Abs},
+		&Instruction{"DEC", 6, the6502.Dec, the6502.Abs},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"BNE", 2, the6502.Bne, the6502.Rel},
+		&Instruction{"CMP", 5, the6502.Cmp, the6502.Izy},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 8, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"CMP", 4, the6502.Cmp, the6502.Zpx},
+		&Instruction{"DEC", 6, the6502.Dec, the6502.Zpx},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"CLD", 2, the6502.Cld, the6502.Imp},
+		&Instruction{"CMP", 4, the6502.Cmp, the6502.Aby},
+		&Instruction{"NOP", 2, the6502.Nop, the6502.Imp},
+		&Instruction{"???", 7, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"CMP", 4, the6502.Cmp, the6502.Abx},
+		&Instruction{"DEC", 7, the6502.Dec, the6502.Abx},
+		&Instruction{"???", 7, the6502.Xxx, the6502.Imp},
+		&Instruction{"CPX", 2, the6502.Cpx, the6502.Imm},
+		&Instruction{"SBC", 6, the6502.Sbc, the6502.Izx},
+		&Instruction{"???", 2, the6502.Nop, the6502.Imp},
+		&Instruction{"???", 8, the6502.Xxx, the6502.Imp},
+		&Instruction{"CPX", 3, the6502.Cpx, the6502.Zp0},
+		&Instruction{"SBC", 3, the6502.Sbc, the6502.Zp0},
+		&Instruction{"INC", 5, the6502.Inc, the6502.Zp0},
+		&Instruction{"???", 5, the6502.Xxx, the6502.Imp},
+		&Instruction{"INX", 2, the6502.Inx, the6502.Imp},
+		&Instruction{"SBC", 2, the6502.Sbc, the6502.Imm},
+		&Instruction{"NOP", 2, the6502.Nop, the6502.Imp},
+		&Instruction{"???", 2, the6502.Sbc, the6502.Imp},
+		&Instruction{"CPX", 4, the6502.Cpx, the6502.Abs},
+		&Instruction{"SBC", 4, the6502.Sbc, the6502.Abs},
+		&Instruction{"INC", 6, the6502.Inc, the6502.Abs},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"BEQ", 2, the6502.Beq, the6502.Rel},
+		&Instruction{"SBC", 5, the6502.Sbc, the6502.Izy},
+		&Instruction{"???", 2, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 8, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"SBC", 4, the6502.Sbc, the6502.Zpx},
+		&Instruction{"INC", 6, the6502.Inc, the6502.Zpx},
+		&Instruction{"???", 6, the6502.Xxx, the6502.Imp},
+		&Instruction{"SED", 2, the6502.Sed, the6502.Imp},
+		&Instruction{"SBC", 4, the6502.Sbc, the6502.Aby},
+		&Instruction{"NOP", 2, the6502.Nop, the6502.Imp},
+		&Instruction{"???", 7, the6502.Xxx, the6502.Imp},
+		&Instruction{"???", 4, the6502.Nop, the6502.Imp},
+		&Instruction{"SBC", 4, the6502.Sbc, the6502.Abx},
+		&Instruction{"INC", 7, the6502.Inc, the6502.Abx},
+		&Instruction{"???", 7, the6502.Xxx, the6502.Imp},
+	}
+}
+
 // Reads an 8-bit byte from the bus, located at the specified 16-bit address
 func read(a uint16) uint8 {
 	return 0
@@ -363,6 +783,11 @@ func write(a uint16, d uint8) {
 
 func main() {
 	the6502 := The6502{}
+
+	the6502.CreateInstructions()
+
+	the6502.instructions[0].Addrmode()
+	the6502.instructions[0].Operate()
 
 	the6502.reset()
 	the6502.irq()
