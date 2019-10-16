@@ -402,7 +402,7 @@ func (the6502 The6502) Izy() uint8 {
 // function. It also returns it for convenience.
 func (the6502 The6502) Fetch() uint8 {
 
-	/* can't do that, refactory is needed
+	/* TODO: can't do that, refactory is needed
 	if the6502.instructions[opcode].Addrmode != the6502.Imp {
 		fetched = read(addrAbs)
 	}
@@ -500,13 +500,135 @@ func (the6502 The6502) Adc() uint8 {
 	//the6502.SetFlag(FlagV, (~((uint16_t)the6502.a ^ (uint16_t)fetched) & ((uint16_t)the6502.a ^ (uint16_t)temp)) & 0x0080);
 
 	// The negative flag is set to the most significant bit of the result
-	the6502.SetFlag(FlagN, temp&uint16(0x80))
+	the6502.SetFlag(FlagN, ((temp & uint16(0x80)) != 0))
 
 	// Load the result into the accumulator (it's 8-bit dont forget!)
-	the6502.a = temp & uint16(0x00ff)
+	the6502.a = uint8(temp & 0x00ff)
 
 	// This instruction has the potential to require an additional clock cycle
 	return 1
+}
+
+// Sbc is Instruction: Subtraction with Borrow In
+// Function:    A = A - M - (1 - C)
+// Flags Out:   C, V, N, Z
+//
+// Explanation:
+// Given the explanation for ADC above, we can reorganise our data
+// to use the same computation for addition, for subtraction by multiplying
+// the data by -1, i.e. make it negative
+//
+// A = A - M - (1 - C)  ->  A = A + -1 * (M - (1 - C))  ->  A = A + (-M + 1 + C)
+//
+// To make a signed positive number negative, we can invert the bits and add 1
+// (OK, I lied, a little bit of 1 and 2s complement :P)
+//
+//  5 = 00000101
+// -5 = 11111010 + 00000001 = 11111011 (or 251 in our 0 to 255 range)
+//
+// The range is actually unimportant, because if I take the value 15, and add 251
+// to it, given we wrap around at 256, the result is 10, so it has effectively
+// subtracted 5, which was the original intention. (15 + 251) % 256 = 10
+//
+// Note that the equation above used (1-C), but this got converted to + 1 + C.
+// This means we already have the +1, so all we need to do is invert the bits
+// of M, the data(!) therfore we can simply add, exactly the same way we did
+// before.
+func (the6502 The6502) Sbc() uint8 {
+	the6502.Fetch()
+
+	// Operating in 16-bit domain to capture carry out
+
+	// We can invert the bottom 8 bits with bitwise xor
+	var value uint16 = uint16(fetched) ^ 0x00ff
+
+	// Notice this is exactly the same as addition from here!
+	temp = uint16(the6502.a) + value + uint16(the6502.GetFlag(FlagC))
+	the6502.SetFlag(FlagC, ((temp & 0xff00) != 0))
+	the6502.SetFlag(FlagZ, ((temp & 0x00ff) == 0))
+	the6502.SetFlag(FlagV, ((temp^uint16(the6502.a))&(temp^value)&0x0080) != 0)
+	the6502.SetFlag(FlagN, ((temp & 0x0080) != 0))
+
+	the6502.a = uint8(temp & 0x00ff)
+
+	return 1
+}
+
+// OK! Complicated operations are done! the following are much simpler
+// and conventional. The typical order of events is:
+// 1) Fetch the data you are working with
+// 2) Perform calculation
+// 3) Store the result in desired place
+// 4) Set Flags of the status register
+// 5) Return if instruction has potential to require additional
+//    clock cycle
+
+// And is Instruction: Bitwise Logic AND
+// Function:    A = A & M
+// Flags Out:   N, Z
+func (the6502 The6502) And() uint8 {
+	the6502.Fetch()
+
+	the6502.a = the6502.a & fetched
+
+	the6502.SetFlag(FlagZ, (the6502.a == 0x00))
+	the6502.SetFlag(FlagN, ((the6502.a & 0x80) != 0))
+	return 1
+}
+
+// Asl is Instruction: Arithmetic Shift Left
+// Function:    A = C <- (A << 1) <- 0
+// Flags Out:   N, Z, C
+func (the6502 The6502) Asl() uint8 {
+	the6502.Fetch()
+
+	temp = uint16(fetched) << 1
+
+	the6502.SetFlag(FlagC, ((temp & 0xff00) > 0))
+	the6502.SetFlag(FlagZ, ((temp & 0x00ff) == 0x00))
+	the6502.SetFlag(FlagN, ((temp & 0x80) != 0))
+
+	/* TODO: can't do that, refactory is needed
+	if the6502.instructions[0].Addrmode() == the6502.Imp {
+		the6502.a = uint8(temp & 0x00ff)
+	} else {
+		write(addrAbs, uint8(temp&0x00ff))
+	}
+	*/
+	return 0
+}
+
+// Bcc is Instruction: Branch if Carry Clear
+// Function:    if(C == 0) pc = address
+func (the6502 The6502) Bcc() uint8 {
+	if the6502.GetFlag(FlagC) == 0 {
+		cycles++
+		addrAbs = the6502.programCounter + addrRel
+
+		if (addrAbs & 0xff00) != (the6502.programCounter & 0xff00) {
+			cycles++
+		}
+
+		the6502.programCounter = addrAbs
+	}
+	return 0
+}
+
+// Bcs is Instruction: Branch if Carry Set
+// Function:    if(C == 1) pc = address
+func (the6502 The6502) Bcs() uint8 {
+	if the6502.GetFlag(FlagC) == 1 {
+		cycles++
+
+		addrAbs = the6502.programCounter + addrRel
+
+		if (addrAbs & 0xff00) != (the6502.programCounter & 0xff00) {
+			cycles++
+		}
+
+		the6502.programCounter = addrAbs
+	}
+	return 0
 }
 
 // CreateInstructions is the method that fill 6502 Instructions table
