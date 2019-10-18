@@ -1,30 +1,25 @@
 package main
 
 import (
-	"github.com/welldias/gones/pkg/cpu"
+	"gones/pkg/cpu"
+	"gones/pkg/bus"
 )
 
 // Disassemble is not required for emulation.
 // It is merely a convenience function to turn the binary instruction code into
 // human readable form. Its included as part of the emulator because it can take
 // advantage of many of the CPUs internal operations to do this.
-func Disassemble(nStart uint16, nStop uint16) map[uint16]string {
+func Disassemble(cpu CPU, nStart uint16, nStop uint16) map[uint16]string {
 
 	var addr uint32 = uint32(nStart)
 	var value, lo, hi uint8
 	var mapLines map[uint16]string
-	var line_addr uint16
+	var lineAddr uint16
 
-	// A convenient utility to convert variables into
-	// hex strings because "modern C++"'s method with 
-	// streams is atrocious
-	auto hex = [](uint32_t n, uint8_t d)
-	{
-		std::string s(d, '0');
-		for (int i = d - 1; i >= 0; i--, n >>= 4)
-			s[i] = "0123456789ABCDEF"[n & 0xF];
-		return s;
-	};
+	// A convenient utility to convert variables into hex strings 
+	hex := func(n uint32, d uint8)string {
+		return fmt.Sprintf("%X", n)
+	}
 
 	// Starting at the specified address we read an instruction
 	// byte, which in turn yields information from the lookup table
@@ -34,88 +29,85 @@ func Disassemble(nStart uint16, nStop uint16) map[uint16]string {
 
 	// As the instruction is decoded, a std::string is assembled
 	// with the readable output
-	while (addr <= (uint32_t)nStop)
-	{
-		line_addr = addr;
+	for addr <= uint32(nStop) {
+		lineAddr = addr
 
 		// Prefix line with instruction address
-		std::string sInst = "$" + hex(addr, 4) + ": ";
+		sInst := "$" + hex(addr, 4) + ": ";
 
 		// Read instruction, and get its readable name
-		uint8_t opcode = bus->read(addr, true); addr++;
-		sInst += lookup[opcode].name + " ";
+		opcode uint8 = cpu.bus.read(addr, true); 
+		addr++;
+		sInst += the6502.lookup[opcode].name + " ";
 
 		// Get oprands from desired locations, and form the
 		// instruction based upon its addressing mode. These
 		// routines mimmick the actual fetch routine of the
 		// 6502 in order to get accurate data as part of the
 		// instruction
-		if (lookup[opcode].addrmode == &olc6502::IMP)
-		{
+		if (the6502.lookup[opcode].addrmode == the6502.IMP) {
 			sInst += " {IMP}";
-		}
-		else if (lookup[opcode].addrmode == &olc6502::IMM)
-		{
-			value = bus->read(addr, true); addr++;
+		} else if (lookup[opcode].addrmode == &olc6502::IMM) {
+			value = cpu.bus.read(addr, true); addr++;
 			sInst += "#$" + hex(value, 2) + " {IMM}";
 		}
 		else if (lookup[opcode].addrmode == &olc6502::ZP0)
 		{
-			lo = bus->read(addr, true); addr++;
+			lo = cpu.bus.read(addr, true); addr++;
 			hi = 0x00;												
 			sInst += "$" + hex(lo, 2) + " {ZP0}";
 		}
 		else if (lookup[opcode].addrmode == &olc6502::ZPX)
 		{
-			lo = bus->read(addr, true); addr++;
+			lo = cpu.bus.read(addr, true); addr++;
 			hi = 0x00;														
 			sInst += "$" + hex(lo, 2) + ", X {ZPX}";
 		}
 		else if (lookup[opcode].addrmode == &olc6502::ZPY)
 		{
-			lo = bus->read(addr, true); addr++;
+			lo = cpu.bus.read(addr, true); addr++;
 			hi = 0x00;														
 			sInst += "$" + hex(lo, 2) + ", Y {ZPY}";
 		}
 		else if (lookup[opcode].addrmode == &olc6502::IZX)
 		{
-			lo = bus->read(addr, true); addr++;
+			lo = cpu.bus.read(addr, true); addr++;
 			hi = 0x00;								
 			sInst += "($" + hex(lo, 2) + ", X) {IZX}";
 		}
 		else if (lookup[opcode].addrmode == &olc6502::IZY)
 		{
-			lo = bus->read(addr, true); addr++;
+			lo = cpu.bus.read(addr, true); addr++;
 			hi = 0x00;								
 			sInst += "($" + hex(lo, 2) + "), Y {IZY}";
 		}
 		else if (lookup[opcode].addrmode == &olc6502::ABS)
 		{
-			lo = bus->read(addr, true); addr++;
-			hi = bus->read(addr, true); addr++;
+			lo = cpu.bus.read(addr, true); addr++;
+			hi = cpu.bus.read(addr, true); addr++;
 			sInst += "$" + hex((uint16_t)(hi << 8) | lo, 4) + " {ABS}";
 		}
 		else if (lookup[opcode].addrmode == &olc6502::ABX)
 		{
-			lo = bus->read(addr, true); addr++;
-			hi = bus->read(addr, true); addr++;
+			lo = cpu.bus.read(addr, true); addr++;
+			hi = cpu.bus.read(addr, true); addr++;
 			sInst += "$" + hex((uint16_t)(hi << 8) | lo, 4) + ", X {ABX}";
 		}
 		else if (lookup[opcode].addrmode == &olc6502::ABY)
 		{
-			lo = bus->read(addr, true); addr++;
-			hi = bus->read(addr, true); addr++;
+			lo = cpu.bus.read(addr, true); addr++;
+			hi = cpu.bus.read(addr, true); addr++;
 			sInst += "$" + hex((uint16_t)(hi << 8) | lo, 4) + ", Y {ABY}";
 		}
 		else if (lookup[opcode].addrmode == &olc6502::IND)
 		{
-			lo = bus->read(addr, true); addr++;
-			hi = bus->read(addr, true); addr++;
+			lo = cpu.bus.read(addr, true); addr++;
+			hi = cpu.bus.read(addr, true); addr++;
 			sInst += "($" + hex((uint16_t)(hi << 8) | lo, 4) + ") {IND}";
 		}
 		else if (lookup[opcode].addrmode == &olc6502::REL)
 		{
-			value = bus->read(addr, true); addr++;
+			value = cpu.bus.read(addr, true); addr++;
 			sInst += "$" + hex(value, 2) + " [$" + hex(addr + value, 4) + "] {REL}";
 		}
 
