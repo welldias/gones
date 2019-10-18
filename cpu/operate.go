@@ -61,5 +61,5 @@ const (
 	OperateTypeTxa OperateType = "TXA"
 	OperateTypeTxs OperateType = "TXS"
 	OperateTypeTya OperateType = "TYA"
-	OperateTypeUnk OperateType = "???"
+	OperateTypeXxx OperateType = "???"
 )

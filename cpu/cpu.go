@@ -1,9 +1,11 @@
 package cpu
 
+import "github.com/welldias/gones/bus"
+
 // Instruction is the opcode translation table.
 type Instruction struct {
-	addreModeType AddrModeType
 	operateType   OperateType
+	addreModeType AddrModeType
 	cycles        uint8
 	Operate       func() uint8
 	Addrmode      func() uint8
@@ -11,7 +13,7 @@ type Instruction struct {
 
 // CPU is The 6502 CPU Core registers
 type CPU struct {
-	bus            BUS
+	bus            bus.BUS
 	a              uint8  // Accumulator Register
 	x              uint8  // X Register
 	y              uint8  // Y Register
@@ -37,8 +39,8 @@ func (cpu CPU) reset() {
 	// Get address to set program counter to
 	addrAbs = 0xfffc
 
-	var lo uint16 = uint16(read(addrAbs + 0))
-	var hi uint16 = uint16(read(addrAbs + 1))
+	var lo uint16 = uint16(cpu.bus.Read(addrAbs + 0))
+	var hi uint16 = uint16(cpu.bus.Read(addrAbs + 1))
 
 	// Set it
 	cpu.programCounter = (hi << 8) | lo
@@ -71,12 +73,12 @@ func (cpu CPU) irq() {
 		// forget so that takes two pushes
 		tempVal16 = 0x0100 + uint16(cpu.stackPtr)
 		tempVal8 = uint8(cpu.programCounter>>8) & 0x00ff
-		write(tempVal16, tempVal8)
+		cpu.bus.Write(tempVal16, tempVal8)
 		cpu.stackPtr--
 
 		tempVal16 = 0x0100 + uint16(cpu.stackPtr)
 		tempVal8 = uint8(cpu.programCounter) & 0x00ff
-		write(tempVal16, tempVal8)
+		cpu.bus.Write(tempVal16, tempVal8)
 		cpu.stackPtr--
 
 		// Then Push the status register to the stack
@@ -85,13 +87,13 @@ func (cpu CPU) irq() {
 		cpu.SetFlag(FlagI, true)
 
 		tempVal16 = 0x0100 + uint16(cpu.stackPtr)
-		write(tempVal16, cpu.status)
+		cpu.bus.Write(tempVal16, cpu.status)
 		cpu.stackPtr--
 
 		// Read new program counter location from fixed address
 		addrAbs = 0xfffe
-		var lo uint16 = uint16(read(addrAbs + 0))
-		var hi uint16 = uint16(read(addrAbs + 1))
+		var lo uint16 = uint16(cpu.bus.Read(addrAbs + 0))
+		var hi uint16 = uint16(cpu.bus.Read(addrAbs + 1))
 		cpu.programCounter = (hi << 8) | lo
 
 		// IRQs take time
@@ -106,12 +108,12 @@ func (cpu CPU) nmi() {
 
 	tempVal16 = 0x0100 + uint16(cpu.stackPtr)
 	tempVal8 = uint8(cpu.programCounter>>8) & 0x00ff
-	write(tempVal16, tempVal8)
+	cpu.bus.Write(tempVal16, tempVal8)
 	cpu.stackPtr--
 
 	tempVal16 = 0x0100 + uint16(cpu.stackPtr)
 	tempVal8 = uint8(cpu.programCounter) & 0x00ff
-	write(tempVal16, tempVal8)
+	cpu.bus.Write(tempVal16, tempVal8)
 	cpu.stackPtr--
 
 	cpu.SetFlag(FlagB, false)
@@ -119,12 +121,12 @@ func (cpu CPU) nmi() {
 	cpu.SetFlag(FlagI, true)
 
 	tempVal16 = 0x0100 + uint16(cpu.stackPtr)
-	write(tempVal16, cpu.status)
+	cpu.bus.Write(tempVal16, cpu.status)
 	cpu.stackPtr--
 
 	addrAbs = 0xfffa
-	var lo uint16 = uint16(read(addrAbs + 0))
-	var hi uint16 = uint16(read(addrAbs + 1))
+	var lo uint16 = uint16(cpu.bus.Read(addrAbs + 0))
+	var hi uint16 = uint16(cpu.bus.Read(addrAbs + 1))
 	cpu.programCounter = (hi << 8) | lo
 
 	cycles = 8
@@ -147,7 +149,7 @@ func (cpu CPU) clock() {
 		// Read next instruction byte. This 8-bit value is used to index
 		// the translation table to get the relevant information about
 		// how to implement the instruction
-		opcode = read(cpu.programCounter)
+		opcode = cpu.bus.Read(cpu.programCounter)
 
 		// Always set the unused status flag bit to 1
 		cpu.SetFlag(FlagU, true)
@@ -221,7 +223,7 @@ func (cpu CPU) Imm() uint8 {
 // a location in first 0xFF bytes of address range. Clearly this only requires
 // one byte instead of the usual two.
 func (cpu CPU) Zp0() uint8 {
-	addrAbs = uint16(read(cpu.programCounter))
+	addrAbs = uint16(cpu.bus.Read(cpu.programCounter))
 	cpu.programCounter++
 	addrAbs &= 0x00ff
 	return 0
@@ -232,7 +234,7 @@ func (cpu CPU) Zp0() uint8 {
 // is added to the supplied single byte address. This is useful for iterating through
 // ranges within the first page.
 func (cpu CPU) Zpx() uint8 {
-	addrAbs = uint16((read(cpu.programCounter) + cpu.x))
+	addrAbs = uint16((cpu.bus.Read(cpu.programCounter) + cpu.x))
 	cpu.programCounter++
 	addrAbs &= 0x00ff
 	return 0
@@ -241,7 +243,7 @@ func (cpu CPU) Zpx() uint8 {
 // Zpy is Address Mode: Zero Page with Y Offset
 // Same as above but uses Y Register for offset
 func (cpu CPU) Zpy() uint8 {
-	addrAbs = uint16((read(cpu.programCounter) + cpu.y))
+	addrAbs = uint16((cpu.bus.Read(cpu.programCounter) + cpu.y))
 	cpu.programCounter++
 	addrAbs &= 0x00ff
 	return 0
@@ -252,7 +254,7 @@ func (cpu CPU) Zpy() uint8 {
 // must reside within -128 to +127 of the branch instruction, i.e.
 // you cant directly branch to any address in the addressable range.
 func (cpu CPU) Rel() uint8 {
-	addrRel = uint16(read(cpu.programCounter))
+	addrRel = uint16(cpu.bus.Read(cpu.programCounter))
 	cpu.programCounter++
 	if (addrRel & 0x80) != 0 {
 		addrRel |= 0xff00
@@ -263,9 +265,9 @@ func (cpu CPU) Rel() uint8 {
 // Abs Address Mode: Absolute
 // A full 16-bit address is loaded and used
 func (cpu CPU) Abs() uint8 {
-	var lo uint16 = uint16(read(cpu.programCounter))
+	var lo uint16 = uint16(cpu.bus.Read(cpu.programCounter))
 	cpu.programCounter++
-	var hi uint16 = uint16(read(cpu.programCounter))
+	var hi uint16 = uint16(cpu.bus.Read(cpu.programCounter))
 	cpu.programCounter++
 
 	addrAbs = (hi << 8) | lo
@@ -278,9 +280,9 @@ func (cpu CPU) Abs() uint8 {
 // is added to the supplied two byte address. If the resulting address changes
 // the page, an additional clock cycle is required
 func (cpu CPU) Abx() uint8 {
-	var lo uint16 = uint16(read(cpu.programCounter))
+	var lo uint16 = uint16(cpu.bus.Read(cpu.programCounter))
 	cpu.programCounter++
-	var hi uint16 = uint16(read(cpu.programCounter))
+	var hi uint16 = uint16(cpu.bus.Read(cpu.programCounter))
 	cpu.programCounter++
 
 	addrAbs = (hi << 8) | lo
@@ -297,9 +299,9 @@ func (cpu CPU) Abx() uint8 {
 // is added to the supplied two byte address. If the resulting address changes
 // the page, an additional clock cycle is required
 func (cpu CPU) Aby() uint8 {
-	var lo uint16 = uint16(read(cpu.programCounter))
+	var lo uint16 = uint16(cpu.bus.Read(cpu.programCounter))
 	cpu.programCounter++
-	var hi uint16 = uint16(read(cpu.programCounter))
+	var hi uint16 = uint16(cpu.bus.Read(cpu.programCounter))
 	cpu.programCounter++
 
 	addrAbs = (hi << 8) | lo
@@ -320,19 +322,19 @@ func (cpu CPU) Aby() uint8 {
 // designed, instead it wraps back around in the same page, yielding an
 // invalid actual address
 func (cpu CPU) Ind() uint8 {
-	var lo uint16 = uint16(read(cpu.programCounter))
+	var lo uint16 = uint16(cpu.bus.Read(cpu.programCounter))
 	cpu.programCounter++
-	var hi uint16 = uint16(read(cpu.programCounter))
+	var hi uint16 = uint16(cpu.bus.Read(cpu.programCounter))
 	cpu.programCounter++
 
 	var ptr uint16 = (hi << 8) | lo
 
 	if lo == 0x00ff { // Simulate page boundary hardware bug
 		tempVal16 := uint16(ptr & 0xff00)
-		addrAbs = uint16(read(tempVal16)<<8 | read(ptr+0))
+		addrAbs = uint16(cpu.bus.Read(tempVal16)<<8 | cpu.bus.Read(ptr+0))
 	} else { // Behave normally
 		tempVal16 := uint16(ptr + 1)
-		addrAbs = uint16((read(tempVal16) << 8) | read(ptr+0))
+		addrAbs = uint16((cpu.bus.Read(tempVal16) << 8) | cpu.bus.Read(ptr+0))
 	}
 
 	return 0
@@ -343,11 +345,11 @@ func (cpu CPU) Ind() uint8 {
 // a location in page 0x00. The actual 16-bit address is read
 // from this location
 func (cpu CPU) Izx() uint8 {
-	var t uint16 = uint16(read(cpu.programCounter))
+	var t uint16 = uint16(cpu.bus.Read(cpu.programCounter))
 	cpu.programCounter++
 
-	var lo uint16 = uint16(read((t + uint16(cpu.x)) & 0x00ff))
-	var hi uint16 = uint16(read((t + uint16(cpu.x) + 1) & 0x00ff))
+	var lo uint16 = uint16(cpu.bus.Read((t + uint16(cpu.x)) & 0x00ff))
+	var hi uint16 = uint16(cpu.bus.Read((t + uint16(cpu.x) + 1) & 0x00ff))
 
 	addrAbs = (hi << 8) | lo
 
@@ -360,11 +362,11 @@ func (cpu CPU) Izx() uint8 {
 // Y Register is added to it to offset it. If the offset causes a
 // change in page then an additional clock cycle is required.
 func (cpu CPU) Izy() uint8 {
-	var t uint16 = uint16(read(cpu.programCounter))
+	var t uint16 = uint16(cpu.bus.Read(cpu.programCounter))
 	cpu.programCounter++
 
-	var lo uint16 = uint16(read(t & 0x00ff))
-	var hi uint16 = uint16(read((t + 1) & 0x00ff))
+	var lo uint16 = uint16(cpu.bus.Read(t & 0x00ff))
+	var hi uint16 = uint16(cpu.bus.Read((t + 1) & 0x00ff))
 
 	addrAbs = (hi << 8) | lo
 	addrAbs += uint16(cpu.y)
@@ -390,7 +392,7 @@ func (cpu CPU) Izy() uint8 {
 func (cpu CPU) Fetch() uint8 {
 
 	if cpu.instructions[opcode].addreModeType != AddrModeTypeImp {
-		fetched = read(addrAbs)
+		fetched = cpu.bus.Read(addrAbs)
 	}
 
 	return fetched
@@ -576,7 +578,7 @@ func (cpu CPU) Asl() uint8 {
 	if cpu.instructions[opcode].addreModeType == AddrModeTypeImp {
 		cpu.a = uint8(temp & 0x00ff)
 	} else {
-		write(addrAbs, uint8(temp&0x00ff))
+		cpu.bus.Write(addrAbs, uint8(temp&0x00ff))
 	}
 
 	return 0
@@ -702,18 +704,18 @@ func (cpu CPU) Brk() uint8 {
 
 	cpu.SetFlag(FlagI, true)
 
-	write(0x0100+uint16(cpu.stackPtr), uint8((cpu.programCounter>>8)&0x00ff))
+	cpu.bus.Write(0x0100+uint16(cpu.stackPtr), uint8((cpu.programCounter>>8)&0x00ff))
 	cpu.stackPtr--
 
-	write(0x0100+uint16(cpu.stackPtr), uint8((cpu.programCounter & 0x00ff)))
+	cpu.bus.Write(0x0100+uint16(cpu.stackPtr), uint8((cpu.programCounter & 0x00ff)))
 	cpu.stackPtr--
 
 	cpu.SetFlag(FlagB, true)
-	write(0x0100+uint16(cpu.stackPtr), cpu.status)
+	cpu.bus.Write(0x0100+uint16(cpu.stackPtr), cpu.status)
 	cpu.stackPtr--
 	cpu.SetFlag(FlagB, false)
 
-	cpu.programCounter = uint16(read(0xfffe)) | uint16(read(0xffff)<<8)
+	cpu.programCounter = uint16(cpu.bus.Read(0xfffe)) | uint16(cpu.bus.Read(0xffff)<<8)
 
 	return 0
 }
@@ -829,7 +831,7 @@ func (cpu CPU) Dec() uint8 {
 
 	temp = uint16(fetched - 1)
 
-	write(addrAbs, uint8(temp&0x00ff))
+	cpu.bus.Write(addrAbs, uint8(temp&0x00ff))
 	cpu.SetFlag(FlagZ, (temp&0x00FF) == 0x0000)
 	cpu.SetFlag(FlagN, (temp&0x0080) != 0x00)
 
@@ -880,7 +882,7 @@ func (cpu CPU) Inc() uint8 {
 
 	temp = uint16(fetched + 1)
 
-	write(addrAbs, uint8(temp&0x00FF))
+	cpu.bus.Write(addrAbs, uint8(temp&0x00FF))
 	cpu.SetFlag(FlagZ, (temp&0x00ff) == 0x0000)
 	cpu.SetFlag(FlagN, (temp&0x0080) != 0x00)
 
@@ -922,10 +924,10 @@ func (cpu CPU) Jmp() uint8 {
 func (cpu CPU) Jsr() uint8 {
 	cpu.programCounter--
 
-	write(0x0100+uint16(cpu.stackPtr), uint8((cpu.programCounter>>8)&0x00ff))
+	cpu.bus.Write(0x0100+uint16(cpu.stackPtr), uint8((cpu.programCounter>>8)&0x00ff))
 	cpu.stackPtr--
 
-	write(0x0100+uint16(cpu.stackPtr), uint8((cpu.programCounter & 0x00ff)))
+	cpu.bus.Write(0x0100+uint16(cpu.stackPtr), uint8((cpu.programCounter & 0x00ff)))
 	cpu.stackPtr--
 
 	cpu.programCounter = addrAbs
@@ -987,7 +989,7 @@ func (cpu CPU) Lsr() uint8 {
 	if cpu.instructions[opcode].addreModeType == AddrModeTypeImp {
 		cpu.a = uint8(temp & 0x00ff)
 	} else {
-		write(addrAbs, uint8(temp&0x00ff))
+		cpu.bus.Write(addrAbs, uint8(temp&0x00ff))
 	}
 
 	return 0
@@ -1024,7 +1026,7 @@ func (cpu CPU) Ora() uint8 {
 // Pha is Instruction: Push Accumulator to Stack
 // Function:    A -> stack
 func (cpu CPU) Pha() uint8 {
-	write(0x0100+uint16(cpu.stackPtr), cpu.a)
+	cpu.bus.Write(0x0100+uint16(cpu.stackPtr), cpu.a)
 	cpu.stackPtr--
 
 	return 0
@@ -1034,7 +1036,7 @@ func (cpu CPU) Pha() uint8 {
 // Function:    cpu.status -> stack
 // Note:        Break flag is set to 1 before push
 func (cpu CPU) Php() uint8 {
-	write(0x0100+uint16(cpu.stackPtr), cpu.status|uint8(FlagB)|uint8(FlagU))
+	cpu.bus.Write(0x0100+uint16(cpu.stackPtr), cpu.status|uint8(FlagB)|uint8(FlagU))
 
 	cpu.SetFlag(FlagB, false)
 	cpu.SetFlag(FlagU, false)
@@ -1048,7 +1050,7 @@ func (cpu CPU) Php() uint8 {
 // Flags Out:   N, Z
 func (cpu CPU) Pla() uint8 {
 	cpu.stackPtr++
-	cpu.a = read(0x0100 + uint16(cpu.stackPtr))
+	cpu.a = cpu.bus.Read(0x0100 + uint16(cpu.stackPtr))
 	cpu.SetFlag(FlagZ, cpu.a == 0x00)
 	cpu.SetFlag(FlagN, (cpu.a&0x80) != 0)
 
@@ -1059,7 +1061,7 @@ func (cpu CPU) Pla() uint8 {
 // Function:    cpu.status <- stack
 func (cpu CPU) Plp() uint8 {
 	cpu.stackPtr++
-	cpu.status = read(0x0100 + uint16(cpu.stackPtr))
+	cpu.status = cpu.bus.Read(0x0100 + uint16(cpu.stackPtr))
 	cpu.SetFlag(FlagU, true)
 
 	return 0
@@ -1078,7 +1080,7 @@ func (cpu CPU) Rol() uint8 {
 	if cpu.instructions[opcode].addreModeType == AddrModeTypeImp {
 		cpu.a = uint8(temp & 0x00ff)
 	} else {
-		write(addrAbs, uint8(temp&0x00ff))
+		cpu.bus.Write(addrAbs, uint8(temp&0x00ff))
 	}
 
 	return 0
@@ -1097,7 +1099,7 @@ func (cpu CPU) Ror() uint8 {
 	if cpu.instructions[opcode].addreModeType == AddrModeTypeImp {
 		cpu.a = uint8(temp & 0x00ff)
 	} else {
-		write(addrAbs, uint8(temp&0x00ff))
+		cpu.bus.Write(addrAbs, uint8(temp&0x00ff))
 	}
 
 	return 0
@@ -1106,14 +1108,14 @@ func (cpu CPU) Ror() uint8 {
 // Rti is Instruction
 func (cpu CPU) Rti() uint8 {
 	cpu.stackPtr++
-	cpu.status = read(0x0100 + uint16(cpu.stackPtr))
+	cpu.status = cpu.bus.Read(0x0100 + uint16(cpu.stackPtr))
 	cpu.status &= ^uint8(FlagB)
 	cpu.status &= ^uint8(FlagU)
 
 	cpu.stackPtr++
-	cpu.programCounter = uint16(read(0x0100 + uint16(cpu.stackPtr)))
+	cpu.programCounter = uint16(cpu.bus.Read(0x0100 + uint16(cpu.stackPtr)))
 	cpu.stackPtr++
-	cpu.programCounter |= uint16(read(0x0100+uint16(cpu.stackPtr)) << 8)
+	cpu.programCounter |= uint16(cpu.bus.Read(0x0100+uint16(cpu.stackPtr)) << 8)
 
 	return 0
 }
@@ -1121,10 +1123,10 @@ func (cpu CPU) Rti() uint8 {
 // Rts is Instruction
 func (cpu CPU) Rts() uint8 {
 	cpu.stackPtr++
-	cpu.programCounter = uint16(read(0x0100 + uint16(cpu.stackPtr)))
+	cpu.programCounter = uint16(cpu.bus.Read(0x0100 + uint16(cpu.stackPtr)))
 
 	cpu.stackPtr++
-	cpu.programCounter |= uint16(read(0x0100+uint16(cpu.stackPtr)) << 8)
+	cpu.programCounter |= uint16(cpu.bus.Read(0x0100+uint16(cpu.stackPtr)) << 8)
 
 	cpu.programCounter++
 
@@ -1157,7 +1159,7 @@ func (cpu CPU) Sei() uint8 {
 // Sta is Instruction: Store Accumulator at Address
 // Function:    M = A
 func (cpu CPU) Sta() uint8 {
-	write(addrAbs, cpu.a)
+	cpu.bus.Write(addrAbs, cpu.a)
 
 	return 0
 }
@@ -1165,7 +1167,7 @@ func (cpu CPU) Sta() uint8 {
 // Stx is Instruction: Store X Register at Address
 // Function:    M = X
 func (cpu CPU) Stx() uint8 {
-	write(addrAbs, cpu.x)
+	cpu.bus.Write(addrAbs, cpu.x)
 
 	return 0
 }
@@ -1173,7 +1175,7 @@ func (cpu CPU) Stx() uint8 {
 // Sty is Instruction: Store Y Register at Address
 // Function:    M = Y
 func (cpu CPU) Sty() uint8 {
-	write(addrAbs, cpu.y)
+	cpu.bus.Write(addrAbs, cpu.y)
 
 	return 0
 }
@@ -1254,271 +1256,261 @@ func (cpu CPU) Complete() bool {
 // CreateInstructions is the method that fill 6502 Instructions table
 func (cpu CPU) CreateInstructions() {
 	cpu.instructions = []*Instruction{
-		&Instruction{OperateTypeBrk, AddrModeTypeImm, cpu.Brk, cpu.Imm, 7},
-		&Instruction{OperateTypeOra, AddrModeTypeIzx, cpu.Ora, cpu.Izx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 8},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 3},
-		&Instruction{OperateTypeOra, AddrModeTypeZp0, cpu.Ora, cpu.Zp0, 3},
-		&Instruction{OperateTypeAsl, AddrModeTypeZp0, cpu.Asl, cpu.Zp0, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 5},
-		&Instruction{OperateTypePhp, AddrModeTypeImp, cpu.Php, cpu.Imp, 3},
-		&Instruction{OperateTypeOra, AddrModeTypeImm, cpu.Ora, cpu.Imm, 2},
-		&Instruction{OperateTypeAsl, AddrModeTypeImp, cpu.Asl, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeOra, AddrModeTypeAbs, cpu.Ora, cpu.Abs, 4},
-		&Instruction{OperateTypeAsl, AddrModeTypeAbs, cpu.Asl, cpu.Abs, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeBpl, AddrModeTypeRel, cpu.Bpl, cpu.Rel, 2},
-		&Instruction{OperateTypeOra, AddrModeTypeIzy, cpu.Ora, cpu.Izy, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 8},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeOra, AddrModeTypeZpx, cpu.Ora, cpu.Zpx, 4},
-		&Instruction{OperateTypeAsl, AddrModeTypeZpx, cpu.Asl, cpu.Zpx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeClc, AddrModeTypeImp, cpu.Clc, cpu.Imp, 2},
-		&Instruction{OperateTypeOra, AddrModeTypeAby, cpu.Ora, cpu.Aby, 4},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeOra, AddrModeTypeAbx, cpu.Ora, cpu.Abx, 4},
-		&Instruction{OperateTypeAsl, AddrModeTypeAbx, cpu.Asl, cpu.Abx, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 7},
-		&Instruction{OperateTypeJsr, AddrModeTypeAbs, cpu.Jsr, cpu.Abs, 6},
-		&Instruction{OperateTypeAnd, AddrModeTypeIzx, cpu.And, cpu.Izx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 8},
-		&Instruction{OperateTypeBit, AddrModeTypeZp0, cpu.Bit, cpu.Zp0, 3},
-		&Instruction{OperateTypeAnd, AddrModeTypeZp0, cpu.And, cpu.Zp0, 3},
-		&Instruction{OperateTypeRol, AddrModeTypeZp0, cpu.Rol, cpu.Zp0, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 5},
-		&Instruction{OperateTypePlp, AddrModeTypeImp, cpu.Plp, cpu.Imp, 4},
-		&Instruction{OperateTypeAnd, AddrModeTypeImm, cpu.And, cpu.Imm, 2},
-		&Instruction{OperateTypeRol, AddrModeTypeImp, cpu.Rol, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeBit, AddrModeTypeAbs, cpu.Bit, cpu.Abs, 4},
-		&Instruction{OperateTypeAnd, AddrModeTypeAbs, cpu.And, cpu.Abs, 4},
-		&Instruction{OperateTypeRol, AddrModeTypeAbs, cpu.Rol, cpu.Abs, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeBmi, AddrModeTypeRel, cpu.Bmi, cpu.Rel, 2},
-		&Instruction{OperateTypeAnd, AddrModeTypeIzy, cpu.And, cpu.Izy, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 8},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeAnd, AddrModeTypeZpx, cpu.And, cpu.Zpx, 4},
-		&Instruction{OperateTypeRol, AddrModeTypeZpx, cpu.Rol, cpu.Zpx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeSec, AddrModeTypeImp, cpu.Sec, cpu.Imp, 2},
-		&Instruction{OperateTypeAnd, AddrModeTypeAby, cpu.And, cpu.Aby, 4},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeAnd, AddrModeTypeAbx, cpu.And, cpu.Abx, 4},
-		&Instruction{OperateTypeRol, AddrModeTypeAbx, cpu.Rol, cpu.Abx, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 7},
-		&Instruction{OperateTypeRti, AddrModeTypeImp, cpu.Rti, cpu.Imp, 6},
-		&Instruction{OperateTypeEor, AddrModeTypeIzx, cpu.Eor, cpu.Izx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 8},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 3},
-		&Instruction{OperateTypeEor, AddrModeTypeZp0, cpu.Eor, cpu.Zp0, 3},
-		&Instruction{OperateTypeLsr, AddrModeTypeZp0, cpu.Lsr, cpu.Zp0, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 5},
-		&Instruction{OperateTypePha, AddrModeTypeImp, cpu.Pha, cpu.Imp, 3},
-		&Instruction{OperateTypeEor, AddrModeTypeImm, cpu.Eor, cpu.Imm, 2},
-		&Instruction{OperateTypeLsr, AddrModeTypeImp, cpu.Lsr, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeJmp, AddrModeTypeAbs, cpu.Jmp, cpu.Abs, 3},
-		&Instruction{OperateTypeEor, AddrModeTypeAbs, cpu.Eor, cpu.Abs, 4},
-		&Instruction{OperateTypeLsr, AddrModeTypeAbs, cpu.Lsr, cpu.Abs, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeBvc, AddrModeTypeRel, cpu.Bvc, cpu.Rel, 2},
-		&Instruction{OperateTypeEor, AddrModeTypeIzy, cpu.Eor, cpu.Izy, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 8},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeEor, AddrModeTypeZpx, cpu.Eor, cpu.Zpx, 4},
-		&Instruction{OperateTypeLsr, AddrModeTypeZpx, cpu.Lsr, cpu.Zpx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeCli, AddrModeTypeImp, cpu.Cli, cpu.Imp, 2},
-		&Instruction{OperateTypeEor, AddrModeTypeAby, cpu.Eor, cpu.Aby, 4},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeEor, AddrModeTypeAbx, cpu.Eor, cpu.Abx, 4},
-		&Instruction{OperateTypeLsr, AddrModeTypeAbx, cpu.Lsr, cpu.Abx, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 7},
-		&Instruction{OperateTypeRts, AddrModeTypeImp, cpu.Rts, cpu.Imp, 6},
-		&Instruction{OperateTypeAdc, AddrModeTypeIzx, cpu.Adc, cpu.Izx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 8},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 3},
-		&Instruction{OperateTypeAdc, AddrModeTypeZp0, cpu.Adc, cpu.Zp0, 3},
-		&Instruction{OperateTypeRor, AddrModeTypeZp0, cpu.Ror, cpu.Zp0, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 5},
-		&Instruction{OperateTypePla, AddrModeTypeImp, cpu.Pla, cpu.Imp, 4},
-		&Instruction{OperateTypeAdc, AddrModeTypeImm, cpu.Adc, cpu.Imm, 2},
-		&Instruction{OperateTypeRor, AddrModeTypeImp, cpu.Ror, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeJmp, AddrModeTypeInd, cpu.Jmp, cpu.Ind, 5},
-		&Instruction{OperateTypeAdc, AddrModeTypeAbs, cpu.Adc, cpu.Abs, 4},
-		&Instruction{OperateTypeRor, AddrModeTypeAbs, cpu.Ror, cpu.Abs, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeBvs, AddrModeTypeRel, cpu.Bvs, cpu.Rel, 2},
-		&Instruction{OperateTypeAdc, AddrModeTypeIzy, cpu.Adc, cpu.Izy, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 8},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeAdc, AddrModeTypeZpx, cpu.Adc, cpu.Zpx, 4},
-		&Instruction{OperateTypeRor, AddrModeTypeZpx, cpu.Ror, cpu.Zpx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeSei, AddrModeTypeImp, cpu.Sei, cpu.Imp, 2},
-		&Instruction{OperateTypeAdc, AddrModeTypeAby, cpu.Adc, cpu.Aby, 4},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeAdc, AddrModeTypeAbx, cpu.Adc, cpu.Abx, 4},
-		&Instruction{OperateTypeRor, AddrModeTypeAbx, cpu.Ror, cpu.Abx, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 2},
-		&Instruction{OperateTypeSta, AddrModeTypeIzx, cpu.Sta, cpu.Izx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeSty, AddrModeTypeZp0, cpu.Sty, cpu.Zp0, 3},
-		&Instruction{OperateTypeSta, AddrModeTypeZp0, cpu.Sta, cpu.Zp0, 3},
-		&Instruction{OperateTypeStx, AddrModeTypeZp0, cpu.Stx, cpu.Zp0, 3},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 3},
-		&Instruction{OperateTypeDey, AddrModeTypeImp, cpu.Dey, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 2},
-		&Instruction{OperateTypeTxa, AddrModeTypeImp, cpu.Txa, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeSty, AddrModeTypeAbs, cpu.Sty, cpu.Abs, 4},
-		&Instruction{OperateTypeSta, AddrModeTypeAbs, cpu.Sta, cpu.Abs, 4},
-		&Instruction{OperateTypeStx, AddrModeTypeAbs, cpu.Stx, cpu.Abs, 4},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 4},
-		&Instruction{OperateTypeBcc, AddrModeTypeRel, cpu.Bcc, cpu.Rel, 2},
-		&Instruction{OperateTypeSta, AddrModeTypeIzy, cpu.Sta, cpu.Izy, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeSty, AddrModeTypeZpx, cpu.Sty, cpu.Zpx, 4},
-		&Instruction{OperateTypeSta, AddrModeTypeZpx, cpu.Sta, cpu.Zpx, 4},
-		&Instruction{OperateTypeStx, AddrModeTypeZpy, cpu.Stx, cpu.Zpy, 4},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 4},
-		&Instruction{OperateTypeTya, AddrModeTypeImp, cpu.Tya, cpu.Imp, 2},
-		&Instruction{OperateTypeSta, AddrModeTypeAby, cpu.Sta, cpu.Aby, 5},
-		&Instruction{OperateTypeTxs, AddrModeTypeImp, cpu.Txs, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 5},
-		&Instruction{OperateTypeSta, AddrModeTypeAbx, cpu.Sta, cpu.Abx, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 5},
-		&Instruction{OperateTypeLdy, AddrModeTypeImm, cpu.Ldy, cpu.Imm, 2},
-		&Instruction{OperateTypeLda, AddrModeTypeIzx, cpu.Lda, cpu.Izx, 6},
-		&Instruction{OperateTypeLdx, AddrModeTypeImm, cpu.Ldx, cpu.Imm, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeLdy, AddrModeTypeZp0, cpu.Ldy, cpu.Zp0, 3},
-		&Instruction{OperateTypeLda, AddrModeTypeZp0, cpu.Lda, cpu.Zp0, 3},
-		&Instruction{OperateTypeLdx, AddrModeTypeZp0, cpu.Ldx, cpu.Zp0, 3},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 3},
-		&Instruction{OperateTypeTay, AddrModeTypeImp, cpu.Tay, cpu.Imp, 2},
-		&Instruction{OperateTypeLda, AddrModeTypeImm, cpu.Lda, cpu.Imm, 2},
-		&Instruction{OperateTypeTax, AddrModeTypeImp, cpu.Tax, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeLdy, AddrModeTypeAbs, cpu.Ldy, cpu.Abs, 4},
-		&Instruction{OperateTypeLda, AddrModeTypeAbs, cpu.Lda, cpu.Abs, 4},
-		&Instruction{OperateTypeLdx, AddrModeTypeAbs, cpu.Ldx, cpu.Abs, 4},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 4},
-		&Instruction{OperateTypeBcs, AddrModeTypeRel, cpu.Bcs, cpu.Rel, 2},
-		&Instruction{OperateTypeLda, AddrModeTypeIzy, cpu.Lda, cpu.Izy, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 5},
-		&Instruction{OperateTypeLdy, AddrModeTypeZpx, cpu.Ldy, cpu.Zpx, 4},
-		&Instruction{OperateTypeLda, AddrModeTypeZpx, cpu.Lda, cpu.Zpx, 4},
-		&Instruction{OperateTypeLdx, AddrModeTypeZpy, cpu.Ldx, cpu.Zpy, 4},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 4},
-		&Instruction{OperateTypeClv, AddrModeTypeImp, cpu.Clv, cpu.Imp, 2},
-		&Instruction{OperateTypeLda, AddrModeTypeAby, cpu.Lda, cpu.Aby, 4},
-		&Instruction{OperateTypeTsx, AddrModeTypeImp, cpu.Tsx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 4},
-		&Instruction{OperateTypeLdy, AddrModeTypeAbx, cpu.Ldy, cpu.Abx, 4},
-		&Instruction{OperateTypeLda, AddrModeTypeAbx, cpu.Lda, cpu.Abx, 4},
-		&Instruction{OperateTypeLdx, AddrModeTypeAby, cpu.Ldx, cpu.Aby, 4},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 4},
-		&Instruction{OperateTypeCpy, AddrModeTypeImm, cpu.Cpy, cpu.Imm, 2},
-		&Instruction{OperateTypeCmp, AddrModeTypeIzx, cpu.Cmp, cpu.Izx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 8},
-		&Instruction{OperateTypeCpy, AddrModeTypeZp0, cpu.Cpy, cpu.Zp0, 3},
-		&Instruction{OperateTypeCmp, AddrModeTypeZp0, cpu.Cmp, cpu.Zp0, 3},
-		&Instruction{OperateTypeDec, AddrModeTypeZp0, cpu.Dec, cpu.Zp0, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 5},
-		&Instruction{OperateTypeIny, AddrModeTypeImp, cpu.Iny, cpu.Imp, 2},
-		&Instruction{OperateTypeCmp, AddrModeTypeImm, cpu.Cmp, cpu.Imm, 2},
-		&Instruction{OperateTypeDex, AddrModeTypeImp, cpu.Dex, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeCpy, AddrModeTypeAbs, cpu.Cpy, cpu.Abs, 4},
-		&Instruction{OperateTypeCmp, AddrModeTypeAbs, cpu.Cmp, cpu.Abs, 4},
-		&Instruction{OperateTypeDec, AddrModeTypeAbs, cpu.Dec, cpu.Abs, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeBne, AddrModeTypeRel, cpu.Bne, cpu.Rel, 2},
-		&Instruction{OperateTypeCmp, AddrModeTypeIzy, cpu.Cmp, cpu.Izy, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 8},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeCmp, AddrModeTypeZpx, cpu.Cmp, cpu.Zpx, 4},
-		&Instruction{OperateTypeDec, AddrModeTypeZpx, cpu.Dec, cpu.Zpx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeCld, AddrModeTypeImp, cpu.Cld, cpu.Imp, 2},
-		&Instruction{OperateTypeCmp, AddrModeTypeAby, cpu.Cmp, cpu.Aby, 4},
-		&Instruction{OperateTypeNop, AddrModeTypeImp, cpu.Nop, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeCmp, AddrModeTypeAbx, cpu.Cmp, cpu.Abx, 4},
-		&Instruction{OperateTypeDec, AddrModeTypeAbx, cpu.Dec, cpu.Abx, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 7},
-		&Instruction{OperateTypeCpx, AddrModeTypeImm, cpu.Cpx, cpu.Imm, 2},
-		&Instruction{OperateTypeSbc, AddrModeTypeIzx, cpu.Sbc, cpu.Izx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 8},
-		&Instruction{OperateTypeCpx, AddrModeTypeZp0, cpu.Cpx, cpu.Zp0, 3},
-		&Instruction{OperateTypeSbc, AddrModeTypeZp0, cpu.Sbc, cpu.Zp0, 3},
-		&Instruction{OperateTypeInc, AddrModeTypeZp0, cpu.Inc, cpu.Zp0, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 5},
-		&Instruction{OperateTypeInx, AddrModeTypeImp, cpu.Inx, cpu.Imp, 2},
-		&Instruction{OperateTypeSbc, AddrModeTypeImm, cpu.Sbc, cpu.Imm, 2},
-		&Instruction{OperateTypeNop, AddrModeTypeImp, cpu.Nop, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Sbc, cpu.Imp, 2},
-		&Instruction{OperateTypeCpx, AddrModeTypeAbs, cpu.Cpx, cpu.Abs, 4},
-		&Instruction{OperateTypeSbc, AddrModeTypeAbs, cpu.Sbc, cpu.Abs, 4},
-		&Instruction{OperateTypeInc, AddrModeTypeAbs, cpu.Inc, cpu.Abs, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeBeq, AddrModeTypeRel, cpu.Beq, cpu.Rel, 2},
-		&Instruction{OperateTypeSbc, AddrModeTypeIzy, cpu.Sbc, cpu.Izy, 5},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 8},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeSbc, AddrModeTypeZpx, cpu.Sbc, cpu.Zpx, 4},
-		&Instruction{OperateTypeInc, AddrModeTypeZpx, cpu.Inc, cpu.Zpx, 6},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 6},
-		&Instruction{OperateTypeSed, AddrModeTypeImp, cpu.Sed, cpu.Imp, 2},
-		&Instruction{OperateTypeSbc, AddrModeTypeAby, cpu.Sbc, cpu.Aby, 4},
-		&Instruction{OperateTypeNop, AddrModeTypeImp, cpu.Nop, cpu.Imp, 2},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Nop, cpu.Imp, 4},
-		&Instruction{OperateTypeSbc, AddrModeTypeAbx, cpu.Sbc, cpu.Abx, 4},
-		&Instruction{OperateTypeInc, AddrModeTypeAbx, cpu.Inc, cpu.Abx, 7},
-		&Instruction{OperateTypeXxx, AddrModeTypeImp, cpu.Xxx, cpu.Imp, 7},
+		&Instruction{OperateTypeBrk, AddrModeTypeImm, 7, cpu.Brk, cpu.Imm},
+		&Instruction{OperateTypeOra, AddrModeTypeIzx, 6, cpu.Ora, cpu.Izx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 8, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 3, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeOra, AddrModeTypeZp0, 3, cpu.Ora, cpu.Zp0},
+		&Instruction{OperateTypeAsl, AddrModeTypeZp0, 5, cpu.Asl, cpu.Zp0},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 5, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypePhp, AddrModeTypeImp, 3, cpu.Php, cpu.Imp},
+		&Instruction{OperateTypeOra, AddrModeTypeImm, 2, cpu.Ora, cpu.Imm},
+		&Instruction{OperateTypeAsl, AddrModeTypeImp, 2, cpu.Asl, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeOra, AddrModeTypeAbs, 4, cpu.Ora, cpu.Abs},
+		&Instruction{OperateTypeAsl, AddrModeTypeAbs, 6, cpu.Asl, cpu.Abs},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeBpl, AddrModeTypeRel, 2, cpu.Bpl, cpu.Rel},
+		&Instruction{OperateTypeOra, AddrModeTypeIzy, 5, cpu.Ora, cpu.Izy},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 8, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeOra, AddrModeTypeZpx, 4, cpu.Ora, cpu.Zpx},
+		&Instruction{OperateTypeAsl, AddrModeTypeZpx, 6, cpu.Asl, cpu.Zpx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeClc, AddrModeTypeImp, 2, cpu.Clc, cpu.Imp},
+		&Instruction{OperateTypeOra, AddrModeTypeAby, 4, cpu.Ora, cpu.Aby},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 7, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeOra, AddrModeTypeAbx, 4, cpu.Ora, cpu.Abx},
+		&Instruction{OperateTypeAsl, AddrModeTypeAbx, 7, cpu.Asl, cpu.Abx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 7, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeJsr, AddrModeTypeAbs, 6, cpu.Jsr, cpu.Abs},
+		&Instruction{OperateTypeAnd, AddrModeTypeIzx, 6, cpu.And, cpu.Izx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 8, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeBit, AddrModeTypeZp0, 3, cpu.Bit, cpu.Zp0},
+		&Instruction{OperateTypeAnd, AddrModeTypeZp0, 3, cpu.And, cpu.Zp0},
+		&Instruction{OperateTypeRol, AddrModeTypeZp0, 5, cpu.Rol, cpu.Zp0},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 5, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypePlp, AddrModeTypeImp, 4, cpu.Plp, cpu.Imp},
+		&Instruction{OperateTypeAnd, AddrModeTypeImm, 2, cpu.And, cpu.Imm},
+		&Instruction{OperateTypeRol, AddrModeTypeImp, 2, cpu.Rol, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeBit, AddrModeTypeAbs, 4, cpu.Bit, cpu.Abs},
+		&Instruction{OperateTypeAnd, AddrModeTypeAbs, 4, cpu.And, cpu.Abs},
+		&Instruction{OperateTypeRol, AddrModeTypeAbs, 6, cpu.Rol, cpu.Abs},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeBmi, AddrModeTypeRel, 2, cpu.Bmi, cpu.Rel},
+		&Instruction{OperateTypeAnd, AddrModeTypeIzy, 5, cpu.And, cpu.Izy},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 8, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeAnd, AddrModeTypeZpx, 4, cpu.And, cpu.Zpx},
+		&Instruction{OperateTypeRol, AddrModeTypeZpx, 6, cpu.Rol, cpu.Zpx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeSec, AddrModeTypeImp, 2, cpu.Sec, cpu.Imp},
+		&Instruction{OperateTypeAnd, AddrModeTypeAby, 4, cpu.And, cpu.Aby},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 7, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeAnd, AddrModeTypeAbx, 4, cpu.And, cpu.Abx},
+		&Instruction{OperateTypeRol, AddrModeTypeAbx, 7, cpu.Rol, cpu.Abx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 7, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeRti, AddrModeTypeImp, 6, cpu.Rti, cpu.Imp},
+		&Instruction{OperateTypeEor, AddrModeTypeIzx, 6, cpu.Eor, cpu.Izx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 8, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 3, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeEor, AddrModeTypeZp0, 3, cpu.Eor, cpu.Zp0},
+		&Instruction{OperateTypeLsr, AddrModeTypeZp0, 5, cpu.Lsr, cpu.Zp0},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 5, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypePha, AddrModeTypeImp, 3, cpu.Pha, cpu.Imp},
+		&Instruction{OperateTypeEor, AddrModeTypeImm, 2, cpu.Eor, cpu.Imm},
+		&Instruction{OperateTypeLsr, AddrModeTypeImp, 2, cpu.Lsr, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeJmp, AddrModeTypeAbs, 3, cpu.Jmp, cpu.Abs},
+		&Instruction{OperateTypeEor, AddrModeTypeAbs, 4, cpu.Eor, cpu.Abs},
+		&Instruction{OperateTypeLsr, AddrModeTypeAbs, 6, cpu.Lsr, cpu.Abs},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeBvc, AddrModeTypeRel, 2, cpu.Bvc, cpu.Rel},
+		&Instruction{OperateTypeEor, AddrModeTypeIzy, 5, cpu.Eor, cpu.Izy},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 8, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeEor, AddrModeTypeZpx, 4, cpu.Eor, cpu.Zpx},
+		&Instruction{OperateTypeLsr, AddrModeTypeZpx, 6, cpu.Lsr, cpu.Zpx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeCli, AddrModeTypeImp, 2, cpu.Cli, cpu.Imp},
+		&Instruction{OperateTypeEor, AddrModeTypeAby, 4, cpu.Eor, cpu.Aby},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 7, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeEor, AddrModeTypeAbx, 4, cpu.Eor, cpu.Abx},
+		&Instruction{OperateTypeLsr, AddrModeTypeAbx, 7, cpu.Lsr, cpu.Abx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 7, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeRts, AddrModeTypeImp, 6, cpu.Rts, cpu.Imp},
+		&Instruction{OperateTypeAdc, AddrModeTypeIzx, 6, cpu.Adc, cpu.Izx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 8, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 3, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeAdc, AddrModeTypeZp0, 3, cpu.Adc, cpu.Zp0},
+		&Instruction{OperateTypeRor, AddrModeTypeZp0, 5, cpu.Ror, cpu.Zp0},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 5, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypePla, AddrModeTypeImp, 4, cpu.Pla, cpu.Imp},
+		&Instruction{OperateTypeAdc, AddrModeTypeImm, 2, cpu.Adc, cpu.Imm},
+		&Instruction{OperateTypeRor, AddrModeTypeImp, 2, cpu.Ror, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeJmp, AddrModeTypeInd, 5, cpu.Jmp, cpu.Ind},
+		&Instruction{OperateTypeAdc, AddrModeTypeAbs, 4, cpu.Adc, cpu.Abs},
+		&Instruction{OperateTypeRor, AddrModeTypeAbs, 6, cpu.Ror, cpu.Abs},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeBvs, AddrModeTypeRel, 2, cpu.Bvs, cpu.Rel},
+		&Instruction{OperateTypeAdc, AddrModeTypeIzy, 5, cpu.Adc, cpu.Izy},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 8, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeAdc, AddrModeTypeZpx, 4, cpu.Adc, cpu.Zpx},
+		&Instruction{OperateTypeRor, AddrModeTypeZpx, 6, cpu.Ror, cpu.Zpx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeSei, AddrModeTypeImp, 2, cpu.Sei, cpu.Imp},
+		&Instruction{OperateTypeAdc, AddrModeTypeAby, 4, cpu.Adc, cpu.Aby},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 7, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeAdc, AddrModeTypeAbx, 4, cpu.Adc, cpu.Abx},
+		&Instruction{OperateTypeRor, AddrModeTypeAbx, 7, cpu.Ror, cpu.Abx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 7, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeSta, AddrModeTypeIzx, 6, cpu.Sta, cpu.Izx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeSty, AddrModeTypeZp0, 3, cpu.Sty, cpu.Zp0},
+		&Instruction{OperateTypeSta, AddrModeTypeZp0, 3, cpu.Sta, cpu.Zp0},
+		&Instruction{OperateTypeStx, AddrModeTypeZp0, 3, cpu.Stx, cpu.Zp0},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 3, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeDey, AddrModeTypeImp, 2, cpu.Dey, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeTxa, AddrModeTypeImp, 2, cpu.Txa, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeSty, AddrModeTypeAbs, 4, cpu.Sty, cpu.Abs},
+		&Instruction{OperateTypeSta, AddrModeTypeAbs, 4, cpu.Sta, cpu.Abs},
+		&Instruction{OperateTypeStx, AddrModeTypeAbs, 4, cpu.Stx, cpu.Abs},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeBcc, AddrModeTypeRel, 2, cpu.Bcc, cpu.Rel},
+		&Instruction{OperateTypeSta, AddrModeTypeIzy, 6, cpu.Sta, cpu.Izy},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeSty, AddrModeTypeZpx, 4, cpu.Sty, cpu.Zpx},
+		&Instruction{OperateTypeSta, AddrModeTypeZpx, 4, cpu.Sta, cpu.Zpx},
+		&Instruction{OperateTypeStx, AddrModeTypeZpy, 4, cpu.Stx, cpu.Zpy},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeTya, AddrModeTypeImp, 2, cpu.Tya, cpu.Imp},
+		&Instruction{OperateTypeSta, AddrModeTypeAby, 5, cpu.Sta, cpu.Aby},
+		&Instruction{OperateTypeTxs, AddrModeTypeImp, 2, cpu.Txs, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 5, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 5, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeSta, AddrModeTypeAbx, 5, cpu.Sta, cpu.Abx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 5, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 5, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeLdy, AddrModeTypeImm, 2, cpu.Ldy, cpu.Imm},
+		&Instruction{OperateTypeLda, AddrModeTypeIzx, 6, cpu.Lda, cpu.Izx},
+		&Instruction{OperateTypeLdx, AddrModeTypeImm, 2, cpu.Ldx, cpu.Imm},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeLdy, AddrModeTypeZp0, 3, cpu.Ldy, cpu.Zp0},
+		&Instruction{OperateTypeLda, AddrModeTypeZp0, 3, cpu.Lda, cpu.Zp0},
+		&Instruction{OperateTypeLdx, AddrModeTypeZp0, 3, cpu.Ldx, cpu.Zp0},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 3, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeTay, AddrModeTypeImp, 2, cpu.Tay, cpu.Imp},
+		&Instruction{OperateTypeLda, AddrModeTypeImm, 2, cpu.Lda, cpu.Imm},
+		&Instruction{OperateTypeTax, AddrModeTypeImp, 2, cpu.Tax, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeLdy, AddrModeTypeAbs, 4, cpu.Ldy, cpu.Abs},
+		&Instruction{OperateTypeLda, AddrModeTypeAbs, 4, cpu.Lda, cpu.Abs},
+		&Instruction{OperateTypeLdx, AddrModeTypeAbs, 4, cpu.Ldx, cpu.Abs},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeBcs, AddrModeTypeRel, 2, cpu.Bcs, cpu.Rel},
+		&Instruction{OperateTypeLda, AddrModeTypeIzy, 5, cpu.Lda, cpu.Izy},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 5, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeLdy, AddrModeTypeZpx, 4, cpu.Ldy, cpu.Zpx},
+		&Instruction{OperateTypeLda, AddrModeTypeZpx, 4, cpu.Lda, cpu.Zpx},
+		&Instruction{OperateTypeLdx, AddrModeTypeZpy, 4, cpu.Ldx, cpu.Zpy},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeClv, AddrModeTypeImp, 2, cpu.Clv, cpu.Imp},
+		&Instruction{OperateTypeLda, AddrModeTypeAby, 4, cpu.Lda, cpu.Aby},
+		&Instruction{OperateTypeTsx, AddrModeTypeImp, 2, cpu.Tsx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeLdy, AddrModeTypeAbx, 4, cpu.Ldy, cpu.Abx},
+		&Instruction{OperateTypeLda, AddrModeTypeAbx, 4, cpu.Lda, cpu.Abx},
+		&Instruction{OperateTypeLdx, AddrModeTypeAby, 4, cpu.Ldx, cpu.Aby},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeCpy, AddrModeTypeImm, 2, cpu.Cpy, cpu.Imm},
+		&Instruction{OperateTypeCmp, AddrModeTypeIzx, 6, cpu.Cmp, cpu.Izx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 8, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeCpy, AddrModeTypeZp0, 3, cpu.Cpy, cpu.Zp0},
+		&Instruction{OperateTypeCmp, AddrModeTypeZp0, 3, cpu.Cmp, cpu.Zp0},
+		&Instruction{OperateTypeDec, AddrModeTypeZp0, 5, cpu.Dec, cpu.Zp0},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 5, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeIny, AddrModeTypeImp, 2, cpu.Iny, cpu.Imp},
+		&Instruction{OperateTypeCmp, AddrModeTypeImm, 2, cpu.Cmp, cpu.Imm},
+		&Instruction{OperateTypeDex, AddrModeTypeImp, 2, cpu.Dex, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeCpy, AddrModeTypeAbs, 4, cpu.Cpy, cpu.Abs},
+		&Instruction{OperateTypeCmp, AddrModeTypeAbs, 4, cpu.Cmp, cpu.Abs},
+		&Instruction{OperateTypeDec, AddrModeTypeAbs, 6, cpu.Dec, cpu.Abs},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeBne, AddrModeTypeRel, 2, cpu.Bne, cpu.Rel},
+		&Instruction{OperateTypeCmp, AddrModeTypeIzy, 5, cpu.Cmp, cpu.Izy},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 8, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeCmp, AddrModeTypeZpx, 4, cpu.Cmp, cpu.Zpx},
+		&Instruction{OperateTypeDec, AddrModeTypeZpx, 6, cpu.Dec, cpu.Zpx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeCld, AddrModeTypeImp, 2, cpu.Cld, cpu.Imp},
+		&Instruction{OperateTypeCmp, AddrModeTypeAby, 4, cpu.Cmp, cpu.Aby},
+		&Instruction{OperateTypeNop, AddrModeTypeImp, 2, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 7, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeCmp, AddrModeTypeAbx, 4, cpu.Cmp, cpu.Abx},
+		&Instruction{OperateTypeDec, AddrModeTypeAbx, 7, cpu.Dec, cpu.Abx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 7, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeCpx, AddrModeTypeImm, 2, cpu.Cpx, cpu.Imm},
+		&Instruction{OperateTypeSbc, AddrModeTypeIzx, 6, cpu.Sbc, cpu.Izx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 8, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeCpx, AddrModeTypeZp0, 3, cpu.Cpx, cpu.Zp0},
+		&Instruction{OperateTypeSbc, AddrModeTypeZp0, 3, cpu.Sbc, cpu.Zp0},
+		&Instruction{OperateTypeInc, AddrModeTypeZp0, 5, cpu.Inc, cpu.Zp0},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 5, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeInx, AddrModeTypeImp, 2, cpu.Inx, cpu.Imp},
+		&Instruction{OperateTypeSbc, AddrModeTypeImm, 2, cpu.Sbc, cpu.Imm},
+		&Instruction{OperateTypeNop, AddrModeTypeImp, 2, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Sbc, cpu.Imp},
+		&Instruction{OperateTypeCpx, AddrModeTypeAbs, 4, cpu.Cpx, cpu.Abs},
+		&Instruction{OperateTypeSbc, AddrModeTypeAbs, 4, cpu.Sbc, cpu.Abs},
+		&Instruction{OperateTypeInc, AddrModeTypeAbs, 6, cpu.Inc, cpu.Abs},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeBeq, AddrModeTypeRel, 2, cpu.Beq, cpu.Rel},
+		&Instruction{OperateTypeSbc, AddrModeTypeIzy, 5, cpu.Sbc, cpu.Izy},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 2, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 8, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeSbc, AddrModeTypeZpx, 4, cpu.Sbc, cpu.Zpx},
+		&Instruction{OperateTypeInc, AddrModeTypeZpx, 6, cpu.Inc, cpu.Zpx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 6, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeSed, AddrModeTypeImp, 2, cpu.Sed, cpu.Imp},
+		&Instruction{OperateTypeSbc, AddrModeTypeAby, 4, cpu.Sbc, cpu.Aby},
+		&Instruction{OperateTypeNop, AddrModeTypeImp, 2, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 7, cpu.Xxx, cpu.Imp},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 4, cpu.Nop, cpu.Imp},
+		&Instruction{OperateTypeSbc, AddrModeTypeAbx, 4, cpu.Sbc, cpu.Abx},
+		&Instruction{OperateTypeInc, AddrModeTypeAbx, 7, cpu.Inc, cpu.Abx},
+		&Instruction{OperateTypeXxx, AddrModeTypeImp, 7, cpu.Xxx, cpu.Imp},
 	}
-}
-
-// Reads an 8-bit byte from the bus, located at the specified 16-bit address
-func (cpu CPU) read(a uint16) uint8 {
-	return cpu.bus.read(a)
-}
-
-// Writes a byte to the bus at the specified address
-func (cpu CPU) write(a uint16, d uint8) {
-	cpu.bus.write(a, d)
 }

@@ -38,14 +38,14 @@ func Disassemble(cpu CPU, nStart uint16, nStop uint16) map[uint16]string {
 		// Read instruction, and get its readable name
 		opcode uint8 = cpu.bus.read(addr, true); 
 		addr++;
-		sInst += the6502.lookup[opcode].name + " ";
+		sInst += cpu.lookup[opcode].name + " ";
 
 		// Get oprands from desired locations, and form the
 		// instruction based upon its addressing mode. These
 		// routines mimmick the actual fetch routine of the
 		// 6502 in order to get accurate data as part of the
 		// instruction
-		if (the6502.lookup[opcode].addrmode == the6502.IMP) {
+		if (cpu.lookup[opcode].  == cpu.IMP) {
 			sInst += " {IMP}";
 		} else if (lookup[opcode].addrmode == &olc6502::IMM) {
 			value = cpu.bus.read(addr, true); addr++;
@@ -124,13 +124,13 @@ func Disassemble(cpu CPU, nStart uint16, nStop uint16) map[uint16]string {
 func main() {
 	the6502 := The6502{}
 
-	the6502.CreateInstructions()
+	cpu.CreateInstructions()
 
-	the6502.instructions[0].Addrmode()
-	the6502.instructions[0].Operate()
+	cpu.instructions[0].Addrmode()
+	cpu.instructions[0].Operate()
 
-	the6502.reset()
-	the6502.irq()
-	the6502.nmi()
-	the6502.clock()
+	cpu.reset()
+	cpu.irq()
+	cpu.nmi()
+	cpu.clock()
 }

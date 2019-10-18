@@ -11,11 +11,11 @@ func (bus BUS) Config() {
 }
 
 // Reads an 8-bit byte from the bus, located at the specified 16-bit address
-func (bus BUS) read(a uint16) uint8 {
+func (bus BUS) Read(a uint16) uint8 {
 	return bus.ram[a]
 }
 
 // Writes a byte to the bus at the specified address
-func (bus BUS) write(a uint16, d uint8) {
+func (bus BUS) Write(a uint16, d uint8) {
 	bus.ram[a] = d
 }
