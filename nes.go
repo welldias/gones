@@ -1,5 +1,9 @@
 package main
 
+import (
+	"github.com/welldias/gones/pkg/cpu"
+)
+
 // Disassemble is not required for emulation.
 // It is merely a convenience function to turn the binary instruction code into
 // human readable form. Its included as part of the emulator because it can take
