@@ -1,8 +1,8 @@
 package main
 
 import (
-	"gones/pkg/cpu"
-	"gones/pkg/bus"
+	"github.com/welldias/gones/pkg/cpu"
+	"github.com/welldias/gones/pkg/bus"
 )
 
 // Disassemble is not required for emulation.
