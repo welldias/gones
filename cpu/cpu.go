@@ -1268,6 +1268,30 @@ func (cpu CPU) GetOperateType(opcode uint8) Instruction {
 	return cpu.instructions[opcode]
 }
 
+// GetProgramCounter is ...
+func (cpu CPU) GetProgramCounter() uint16 {
+	return cpu.programCounter
+}
+
+// GetRegisterA is ...
+func (cpu CPU) GetRegisterA() uint8 {
+	return cpu.a
+}
+
+// GetRegisterX is ...
+func (cpu CPU) GetRegisterX() uint8 {
+	return cpu.x
+}
+
+// GetRegisterY is ...
+func (cpu CPU) GetRegisterY() uint8 {
+	return cpu.y
+}
+
+func (cpu CPU) GetStackPtr() uint8 {
+	return cpu.stackPtr
+}
+
 //Config is the method that init the cpu params
 func (cpu CPU) Config() {
 	cpu.bus.Config()

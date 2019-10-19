@@ -30,7 +30,7 @@ func disassemble(olc6502 cpu.CPU, nStart uint16, nStop uint16) map[uint16]string
 		lineAddr = addr
 
 		// Prefix line with instruction address
-		sInst := "$" + fmt.Sprintf("%4X", addr) + ": "
+		sInst := fmt.Sprintf("$%4X: ", addr)
 
 		// Read instruction, and get its readable name
 		var opcode uint8 = olc6502.Read(addr)
