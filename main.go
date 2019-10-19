@@ -1,25 +1,22 @@
 package main
 
 import (
-	"github.com/welldias/gones/pkg/cpu"
-	"github.com/welldias/gones/pkg/bus"
+	"fmt"
+
+	"github.com/welldias/gones/cpu"
 )
 
-// Disassemble is not required for emulation.
+// disassemble is not required for emulation.
 // It is merely a convenience function to turn the binary instruction code into
 // human readable form. Its included as part of the emulator because it can take
 // advantage of many of the CPUs internal operations to do this.
-func Disassemble(cpu CPU, nStart uint16, nStop uint16) map[uint16]string {
+func disassemble(olc6502 cpu.CPU, nStart uint16, nStop uint16) map[uint16]string {
 
-	var addr uint32 = uint32(nStart)
+	var addr uint16 = nStart
 	var value, lo, hi uint8
-	var mapLines map[uint16]string
 	var lineAddr uint16
 
-	// A convenient utility to convert variables into hex strings 
-	hex := func(n uint32, d uint8)string {
-		return fmt.Sprintf("%X", n)
-	}
+	var mapLines = make(map[uint16]string)
 
 	// Starting at the specified address we read an instruction
 	// byte, which in turn yields information from the lookup table
@@ -29,108 +26,100 @@ func Disassemble(cpu CPU, nStart uint16, nStop uint16) map[uint16]string {
 
 	// As the instruction is decoded, a std::string is assembled
 	// with the readable output
-	for addr <= uint32(nStop) {
+	for addr <= nStop {
 		lineAddr = addr
 
 		// Prefix line with instruction address
-		sInst := "$" + hex(addr, 4) + ": ";
+		sInst := "$" + fmt.Sprintf("%4X", addr) + ": "
 
 		// Read instruction, and get its readable name
-		opcode uint8 = cpu.bus.read(addr, true); 
-		addr++;
-		sInst += cpu.lookup[opcode].name + " ";
+		var opcode uint8 = olc6502.Read(addr)
+		addr++
+		sInst += fmt.Sprintf("%s ", olc6502.GetOperateType(opcode).OperType)
 
 		// Get oprands from desired locations, and form the
 		// instruction based upon its addressing mode. These
 		// routines mimmick the actual fetch routine of the
 		// 6502 in order to get accurate data as part of the
 		// instruction
-		if (cpu.lookup[opcode].  == cpu.IMP) {
-			sInst += " {IMP}";
-		} else if (lookup[opcode].addrmode == &olc6502::IMM) {
-			value = cpu.bus.read(addr, true); addr++;
-			sInst += "#$" + hex(value, 2) + " {IMM}";
+		switch olc6502.GetOperateType(opcode).AddrMdType {
+		case cpu.AddrModeTypeImp:
+			sInst += " {IMP}"
+		case cpu.AddrModeTypeImm:
+			value = olc6502.Read(addr)
+			addr++
+			sInst += fmt.Sprintf("#$%2X {IMM}", value)
+		case cpu.AddrModeTypeZp0:
+			lo = olc6502.Read(addr)
+			addr++
+			hi = 0x00
+			sInst += fmt.Sprintf("$%2X {ZP0}", lo)
+		case cpu.AddrModeTypeZpx:
+			lo = olc6502.Read(addr)
+			addr++
+			hi = 0x00
+			sInst += fmt.Sprintf("$%2X, X {ZPX}", lo)
+		case cpu.AddrModeTypeZpy:
+			lo = olc6502.Read(addr)
+			addr++
+			hi = 0x00
+			sInst += fmt.Sprintf("$%2X, Y {ZPY}", uint32(lo))
+		case cpu.AddrModeTypeIzx:
+			lo = olc6502.Read(addr)
+			addr++
+			hi = 0x00
+			sInst += fmt.Sprintf("($%2X, X) {IZX}", uint32(lo))
+		case cpu.AddrModeTypeIzy:
+			lo = olc6502.Read(addr)
+			addr++
+			hi = 0x00
+			sInst += fmt.Sprintf("($%2X), Y {IZY}", uint32(lo))
+		case cpu.AddrModeTypeAbs:
+			lo = olc6502.Read(addr)
+			addr++
+			hi = olc6502.Read(addr)
+			addr++
+			sInst += fmt.Sprintf("$%4X {ABS}", ((uint16(hi) << 8) | uint16(lo)))
+		case cpu.AddrModeTypeAbx:
+			lo = olc6502.Read(addr)
+			addr++
+			hi = olc6502.Read(addr)
+			addr++
+			sInst += fmt.Sprintf("$%4X {ABX}", ((uint16(hi) << 8) | uint16(lo)))
+		case cpu.AddrModeTypeAby:
+			lo = olc6502.Read(addr)
+			addr++
+			hi = olc6502.Read(addr)
+			addr++
+			sInst += fmt.Sprintf("$%4X {ABY}", ((uint16(hi) << 8) | uint16(lo)))
+		case cpu.AddrModeTypeInd:
+			lo = olc6502.Read(addr)
+			addr++
+			hi = olc6502.Read(addr)
+			addr++
+			sInst += fmt.Sprintf("($%4X) {IND}", ((uint16(hi) << 8) | uint16(lo)))
+		case cpu.AddrModeTypeRel:
+			value = olc6502.Read(addr)
+			addr++
+			sInst += fmt.Sprintf("$%4X {REL}", value)
 		}
-		else if (lookup[opcode].addrmode == &olc6502::ZP0)
-		{
-			lo = cpu.bus.read(addr, true); addr++;
-			hi = 0x00;												
-			sInst += "$" + hex(lo, 2) + " {ZP0}";
-		}
-		else if (lookup[opcode].addrmode == &olc6502::ZPX)
-		{
-			lo = cpu.bus.read(addr, true); addr++;
-			hi = 0x00;														
-			sInst += "$" + hex(lo, 2) + ", X {ZPX}";
-		}
-		else if (lookup[opcode].addrmode == &olc6502::ZPY)
-		{
-			lo = cpu.bus.read(addr, true); addr++;
-			hi = 0x00;														
-			sInst += "$" + hex(lo, 2) + ", Y {ZPY}";
-		}
-		else if (lookup[opcode].addrmode == &olc6502::IZX)
-		{
-			lo = cpu.bus.read(addr, true); addr++;
-			hi = 0x00;								
-			sInst += "($" + hex(lo, 2) + ", X) {IZX}";
-		}
-		else if (lookup[opcode].addrmode == &olc6502::IZY)
-		{
-			lo = cpu.bus.read(addr, true); addr++;
-			hi = 0x00;								
-			sInst += "($" + hex(lo, 2) + "), Y {IZY}";
-		}
-		else if (lookup[opcode].addrmode == &olc6502::ABS)
-		{
-			lo = cpu.bus.read(addr, true); addr++;
-			hi = cpu.bus.read(addr, true); addr++;
-			sInst += "$" + hex((uint16_t)(hi << 8) | lo, 4) + " {ABS}";
-		}
-		else if (lookup[opcode].addrmode == &olc6502::ABX)
-		{
-			lo = cpu.bus.read(addr, true); addr++;
-			hi = cpu.bus.read(addr, true); addr++;
-			sInst += "$" + hex((uint16_t)(hi << 8) | lo, 4) + ", X {ABX}";
-		}
-		else if (lookup[opcode].addrmode == &olc6502::ABY)
-		{
-			lo = cpu.bus.read(addr, true); addr++;
-			hi = cpu.bus.read(addr, true); addr++;
-			sInst += "$" + hex((uint16_t)(hi << 8) | lo, 4) + ", Y {ABY}";
-		}
-		else if (lookup[opcode].addrmode == &olc6502::IND)
-		{
-			lo = cpu.bus.read(addr, true); addr++;
-			hi = cpu.bus.read(addr, true); addr++;
-			sInst += "($" + hex((uint16_t)(hi << 8) | lo, 4) + ") {IND}";
-		}
-		else if (lookup[opcode].addrmode == &olc6502::REL)
-		{
-			value = cpu.bus.read(addr, true); addr++;
-			sInst += "$" + hex(value, 2) + " [$" + hex(addr + value, 4) + "] {REL}";
-		}
+
+		fmt.Println("lineAddr:", lineAddr)
+		fmt.Println("sInst   :", sInst)
 
 		// Add the formed string to a std::map, using the instruction's
 		// address as the key. This makes it convenient to look for later
 		// as the instructions are variable in length, so a straight up
 		// incremental index is not sufficient.
-		mapLines[line_addr] = sInst;
+		mapLines[lineAddr] = sInst
 	}
 
-	return mapLines;
+	return mapLines
 }
 
 func main() {
-	the6502 := The6502{}
+	olc6502 := cpu.CPU{}
 
-	cpu.CreateInstructions()
-
-	cpu.instructions[0].Addrmode()
-	cpu.instructions[0].Operate()
-
-	cpu.reset()
-	cpu.irq()
-	cpu.nmi()
-	cpu.clock()
+	olc6502.Config()
+	disassemble(olc6502, 0, 10)
 }

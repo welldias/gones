@@ -1,13 +1,18 @@
 package bus
 
+import (
+	"fmt"
+)
+
 // BUS is the bus of nes system
 type BUS struct {
-	ram []uint8
+	ram [64 * 1024]uint8
 }
 
 // Config is
 func (bus BUS) Config() {
-	bus.ram = make([]uint8, 64*1024)
+	//bus.ram = make([]uint8, 64*1024)
+	fmt.Println("Tamanho da RAM:", len(bus.ram))
 }
 
 // Reads an 8-bit byte from the bus, located at the specified 16-bit address
