@@ -118,6 +118,8 @@ func disassemble(olc6502 cpu.CPU, nStart uint16, nStop uint16) map[uint16]string
 }
 
 func main() {
+	runDemo()
+
 	olc6502 := cpu.CPU{}
 
 	olc6502.Config()
