@@ -34,7 +34,7 @@ var (
 )
 
 // Reset Interrupt - Forces CPU into known state
-func (cpu CPU) reset() {
+func (cpu CPU) Reset() {
 
 	// Get address to set program counter to
 	addrAbs = 0xfffc
@@ -61,8 +61,8 @@ func (cpu CPU) reset() {
 	cycles = 8
 }
 
-// Interrupt Request - Executes an instruction at a specific location
-func (cpu CPU) irq() {
+// Irq is Interrupt Request - Executes an instruction at a specific location
+func (cpu CPU) Irq() {
 
 	// If interrupts are allowed
 	if cpu.GetFlag(FlagI) == 0 {
@@ -101,8 +101,8 @@ func (cpu CPU) irq() {
 	}
 }
 
-// Non-Maskable Interrupt Request - As above, but cannot be disabled
-func (cpu CPU) nmi() {
+//Nmi is Non-Maskable Interrupt Request - As above, but cannot be disabled
+func (cpu CPU) Nmi() {
 	var tempVal16 uint16
 	var tempVal8 uint8
 
@@ -132,8 +132,8 @@ func (cpu CPU) nmi() {
 	cycles = 8
 }
 
-// Perform one clock cycle's worth of update
-func (cpu CPU) clock() {
+// Clock Perform one clock cycle's worth of update
+func (cpu CPU) Clock() {
 
 	// Each instruction requires a variable number of clock cycles to execute.
 	// In my emulation, I only care about the final result and so I perform
