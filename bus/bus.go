@@ -6,12 +6,12 @@ import (
 
 // BUS is the bus of nes system
 type BUS struct {
-	ram [64 * 1024]uint8
+	ram []uint8
 }
 
 // Config is
-func (bus BUS) Config() {
-	//bus.ram = make([]uint8, 64*1024)
+func (bus *BUS) Config() {
+	bus.ram = make([]uint8, 64*1024)
 	fmt.Println("Tamanho da RAM:", len(bus.ram))
 }
 
@@ -21,6 +21,6 @@ func (bus BUS) Read(a uint16) uint8 {
 }
 
 // Writes a byte to the bus at the specified address
-func (bus BUS) Write(a uint16, d uint8) {
+func (bus *BUS) Write(a uint16, d uint8) {
 	bus.ram[a] = d
 }
